@@ -91,7 +91,8 @@ def test_builder_apply_replaces_removed_monday(env):
     at.selectbox(key="bld_client").set_value(anton["id"]).run()
     split = next(p for p in anton["program"]["phases"] if p["name"] == "Split program")
     at.selectbox(key="bld_phase").set_value(split["id"]).run()
-    at.selectbox(key="bld_day").set_value(split["days"][0]["id"]).run()
+    at.session_state["bld_day"] = split["days"][0]["id"]
+    at.run()
     at.date_input(key="bld_date").set_value(dt.date(2026, 10, 5)).run()
     next(b for b in at.button if b.label == "Remove workout for this date").click().run()
     assert clients_by_name(env)["Anton"]["program"]["date_workouts"]["2026-10-05"] == []
@@ -122,10 +123,11 @@ def test_general_applies_only_to_chosen_date_and_cancel_is_available(env):
     assert list(program["date_workouts"]) == ["2026-10-15"]
     assert program["date_workouts"]["2026-10-15"][0]["title"] == general["days"][0]["title"]
     assert not at.exception
-    at.selectbox(key="bld_day").set_value("__new__").run()
+    at.session_state["bld_day"] = "__new__"
+    at.run()
     at.text_input(key="bld_newname").set_value("Unfinished")
     next(b for b in at.button if b.label == "Cancel new day").click().run()
-    assert at.selectbox(key="bld_day").value != "__new__"
+    assert at.session_state["bld_day"] != "__new__"
     assert not at.exception
 
 
@@ -147,12 +149,13 @@ def test_delete_saved_workout_removes_only_selected_template(env):
     phase = next(p for p in before["phases"] if p["id"] == at.session_state["bld_phase"])
     removed = phase["days"][0]["id"]
     retained = [d for d in phase["days"] if d["id"] != removed]
-    at.button(key=f"delete_saved_{cid}_{removed}").click().run()
+    at.session_state[f"saved_picker_{cid}_{phase['id']}"] = {"action": {"kind": "remove", "id": removed}}
+    at.run()
     assert not at.exception
     after = store(env)[cid]["program"]
     assert next(p for p in after["phases"] if p["id"] == phase["id"])["days"] == retained
     assert all(d["id"] != removed for p in at.session_state["builder_drafts"][cid]["program"]["phases"] for d in p["days"])
-    assert at.selectbox(key="bld_day").value != removed
+    assert at.session_state["bld_day"] != removed
 
 
 def test_seed_creates_the_ten_clients_and_plans(env):
