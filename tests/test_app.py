@@ -478,6 +478,10 @@ def test_split_class_swap_is_category_filtered_and_date_only(env):
     button = at.button(key=f"swap_{date}_{old['id']}")
     assert button.label == "Change class"
     button.click().run()
+    assigned_button = at.button(key=f"swap_choice_{old['lib_id']}")
+    assert assigned_button.disabled
+    assert assigned_button.label == "Already in workout list"
+    assert any(x.value == "Already in this workout list" for x in at.caption)
     used = {e.get("lib_id") for e in split["days"][0]["exercises"]}
     choice = next(e for e in rows["lib"]["exercises"] if e["group"] == "Chest" and e["id"] not in used)
     at.button(key=f"swap_choice_{choice['id']}").click().run()
