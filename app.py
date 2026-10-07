@@ -944,7 +944,7 @@ def client_swap_exercise(cid, date, day_id, exercise_id, library_id):
         return
     c = B.get(cid)
     day = next((d for d in workouts_for_date(c, date) if d["id"] == day_id), None) if c else None
-    if not day or not day.get("allow_swaps"):
+    if not day:
         return
     old = next((e for e in day["exercises"] if e["id"] == exercise_id), None)
     choice = next((e for e in get_lib() if e["id"] == library_id), None)
@@ -970,7 +970,7 @@ def open_exercise_picker(date, day_id, exercise_id):
 def client_exercise_library(c, lib_map):
     pick = ss["exercise_picker"]
     day = next((d for d in workouts_for_date(c, pick["date"]) if d["id"] == pick["day"]), None)
-    old = next((e for e in day["exercises"] if e["id"] == pick["exercise"]), None) if day and day.get("allow_swaps") else None
+    old = next((e for e in day["exercises"] if e["id"] == pick["exercise"]), None) if day else None
     if not old:
         ss.pop("exercise_picker", None)
         st.rerun()
@@ -1003,8 +1003,8 @@ def workout_card(c, d, lib_map, sel_date, editable):
     for i, e in enumerate(exs):
         done = is_done(c, sel_date, "ex", e["id"])
         with st.expander(f"{i + 1}. {glabel(e.get('group', 'Other'))} · {e['name']}{'  ✅' if done else ''}"):
-            if d.get("allow_swaps") and not ss.get("trainer_preview"):
-                st.button("Change exercise", key=f"swap_{sel_date}_{e['id']}", disabled=done, on_click=open_exercise_picker, args=(sel_date, d["id"], e["id"]))
+            if not ss.get("trainer_preview"):
+                st.button("Change exercise" if d.get("allow_swaps") else "Change class", key=f"swap_{sel_date}_{e['id']}", disabled=done, on_click=open_exercise_picker, args=(sel_date, d["id"], e["id"]))
             render_media(e, lib_map)
             st.markdown(chips_html(e), unsafe_allow_html=True)
             if e.get("notes"):
@@ -1766,6 +1766,23 @@ def open_client_preview(cid):
         ss["preview_nav"] = "Home"
 
 
+
+def trainer_remove_preview_workout(cid, date, day_id):
+    if not ss.get("trainer_ok") or ss.get("trainer_preview") != cid:
+        return
+    current = B.get(cid)
+    if not current:
+        return
+    workouts = workouts_for_date(current, date)
+    selected = next((d for d in workouts if d["id"] == day_id), None)
+    if not selected:
+        return
+    current["program"].setdefault("date_workouts", {})[date] = copy.deepcopy([d for d in workouts if d["id"] != day_id])
+    save_client(current)
+    ss.get("builder_drafts", {}).pop(cid, None)
+    ss["_preview_msg"] = f"Removed {selected['title']} from {date}."
+
+
 def trainer_client_preview():
     if not ss.get("trainer_ok"):
         return
@@ -1774,6 +1791,8 @@ def trainer_client_preview():
         ss.pop("trainer_preview", None)
         st.rerun()
     st.info(f"Trainer preview · {c['name']} · Onboarding skipped for this view")
+    if ss.get("_preview_msg"):
+        st.success(ss.pop("_preview_msg"))
     if st.button("Back to trainer"):
         ss.pop("trainer_preview", None)
         st.rerun()
@@ -1791,7 +1810,12 @@ def trainer_client_preview():
         selected = now().date().weekday() if selected is None else selected
         date = dates[selected].isoformat()
         st.markdown(f"**{dates[selected]:%A, %B %d}**")
+        st.caption("The × removes only that workout from this date. Other days and the saved weekly plan remain unchanged.")
         for day in workouts_for_date(c, date):
+            label, remove = st.columns([6, 1])
+            label.markdown(f"**{day['title']}**")
+            remove.button("×", key=f"preview_remove_{date}_{day['id']}", help="Remove this workout from this date",
+                          on_click=trainer_remove_preview_workout, args=(c["id"], date, day["id"]))
             workout_card(c, day, lib_map, date, False)
         if not workouts_for_date(c, date):
             st.info("No workouts on this day.")
