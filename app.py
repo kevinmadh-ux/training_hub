@@ -1015,6 +1015,11 @@ def tab_training(c, lib_map):
         nxt = next((d for d in workouts_for_date(c, td) if not day_done(c, today(), d)), None)
         a.markdown(f"**Next session**  \n{nxt['title'] if nxt else 'All done. You are all caught up.'}")
         b.markdown(f"**{streak(c)}**  \nday streak")
+    with st.container(border=True):
+        st.markdown("**🔥 Streak rewards · Coming soon**")
+        st.write("Build your workout streak to unlock premium workouts.")
+        st.caption("Keep showing up—every workout day adds to your streak. Your trainer will announce the unlock target and premium workouts.")
+
 
 
 def guided_workout(c, lib_map):
