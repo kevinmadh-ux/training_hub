@@ -802,20 +802,25 @@ def client_login():
     if not directory:
         st.markdown('<div class="th-card th-empty">No clients have been set up yet.<br>Ask your trainer to add you.</div>', unsafe_allow_html=True)
     else:
-        names = {d["id"]: d["name"] for d in directory}
         with st.container(border=True):
-            cid = st.selectbox("Your name", list(names), index=None, placeholder="Select your name…", format_func=lambda i: names[i])
+            name = st.text_input("Your name", key="client_login_name", placeholder="Type the name your trainer registered")
             pin = st.text_input("PIN", type="password", max_chars=4, placeholder="4-digit PIN")
             if ss.get("tries", 0) >= 5:
                 st.error("Too many wrong PINs. Ask your trainer to reset it.")
-            elif st.button("Log in", type="primary", width="stretch", disabled=cid is None):
-                c = B.get(cid)
-                if c and pin_ok(c, pin):
-                    ss["client_id"], ss["tries"] = cid, 0
+            elif st.button("Log in", type="primary", width="stretch", disabled=not name.strip()):
+                normalized = " ".join(name.split()).casefold()
+                candidates = [d for d in directory if " ".join(d["name"].split()).casefold() == normalized]
+                matches = []
+                for entry in candidates:
+                    c = B.get(entry["id"])
+                    if c and pin_ok(c, pin):
+                        matches.append(c)
+                if len(matches) == 1:
+                    ss["client_id"], ss["tries"] = matches[0]["id"], 0
                     st.rerun()
                 else:
                     ss["tries"] = ss.get("tries", 0) + 1
-                    st.error("That PIN is not correct.")
+                    st.error("That name or PIN is not correct.")
     if st.button("I am the trainer", type="tertiary"):
         ss["mode"] = "trainer"
         st.rerun()
