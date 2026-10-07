@@ -147,3 +147,7 @@ selection basket, and press **Send selection to General draft**. This replaces
 the General draft's exercises with your selection. Open Workout builder to
 review the draft and Apply it. Drafts last for the current trainer session;
 apply before closing the app. These changes are prepared for later deployment.
+
+### Client activity and diet progress
+
+Habit includes daily manual entry of steps and calories burned from a tracker, with charts for the last 30 recorded days. Saving the same date updates its entry. Nutrition shows seven-day food logging, planned meal completion and substitutions. Trainer suggestions display assigned diet targets separately from optional client calorie entries.
