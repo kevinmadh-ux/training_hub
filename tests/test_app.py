@@ -334,6 +334,44 @@ def test_guided_workout_and_optional_bonus_completion(env):
     assert not at.exception
 
 
+def test_general_category_swap_changes_only_assigned_date(env):
+    import copy
+    at = trainer_seeded(env)
+    client = clients_by_name(env)["Anton"]
+    at.radio(key="page").set_value("Workout builder").run()
+    at.selectbox(key="bld_client").set_value(client["id"]).run()
+    general = client["program"]["phases"][0]
+    at.selectbox(key="bld_phase").set_value(general["id"]).run()
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    rows = store(env)
+    client = rows[client["id"]]
+    date = next(iter(client["program"]["date_workouts"]))
+    original_phases = copy.deepcopy(client["program"]["phases"])
+    original = copy.deepcopy(client["program"]["date_workouts"][date][0])
+    client.update(onboarded=True, must_change_pin=False)
+    (env / "store.json").write_text(json.dumps(rows))
+    at.session_state["trainer_ok"] = False
+    at.session_state["mode"] = "client"
+    at.session_state["client_id"] = client["id"]
+    at.session_state["nav"] = "🏋️"
+    at.run()
+    old = original["exercises"][0]
+    import datetime as dt
+    at.segmented_control(key="train_day").set_value(dt.date.fromisoformat(date).weekday()).run()
+    at.button(key=f"swap_{date}_{old['id']}").click().run()
+    assert any("Chest" in x.value for x in at.subheader)
+    candidates = [e for e in rows["lib"]["exercises"] if e["group"] == "Chest" and e["id"] not in {x.get("lib_id") for x in original["exercises"]}]
+    chosen = candidates[0]
+    at.button(key=f"swap_choice_{chosen['id']}").click().run()
+    saved = store(env)[client["id"]]
+    swapped = saved["program"]["date_workouts"][date][0]["exercises"][0]
+    assert swapped["lib_id"] == chosen["id"]
+    assert swapped["sets"] == old["sets"] and swapped["reps"] == old["reps"]
+    assert saved["program"]["phases"] == original_phases
+    assert list(saved["program"]["date_workouts"]) == [date]
+    assert not at.exception
+
+
 def test_builder_adds_selected_exercises_to_a_new_day(env):
     at = trainer_seeded(env)
     venky = clients_by_name(env)["Venky"]["id"]
