@@ -9,7 +9,7 @@ A coaching app in the HubFit style. It runs on its own web address (not on Claud
 **Clients see** a phone-style app with five tabs (🏠 Home, 🏋️ Training, 🌿 Habit, 🍎 Nutrition, 👤 Profile):
 - Training: a week strip, the workout for each day with exercise animation, sets, reps, rest and notes, a **Start workout** mode that walks through each exercise and set, and calendar links.
 - Habit: weekly progress and daily habit check-offs.
-- Nutrition: a food log with a calorie ring and macros, plus your meal plan with daily reminders.
+- Nutrition: record breakfast, lunch, dinner and snacks even without a trainer plan; calories and macros are optional. In Plan, mark an assigned meal as eaten or record what you ate instead, with daily reminders.
 - Profile: weekly check-in, progress photo gallery (private), body-weight chart, and their details.
 - **First login:** the client types their registered name and enters the starter PIN you gave them, chooses their own PIN, then enters height, weight, preferred diet, goal (fat loss or muscle gain) and training style (general fitness, men's physique or bodybuilding).
 
