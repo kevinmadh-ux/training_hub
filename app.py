@@ -1068,8 +1068,26 @@ def totals_for(c, d):
     return t
 
 
+
+def save_meal_response(cid, date, meal, status, actual, slot):
+    c = B.get(cid)
+    if not c:
+        return
+    if status == "Ate something else" and not actual.strip():
+        return False
+    event_set(c, date, "meal", meal["id"], status == "Ate the planned meal", meal["text"])
+    logs = c.setdefault("food_log", [])
+    logs[:] = [x for x in logs if not (x.get("d") == date and x.get("plan_ref") == meal["id"])]
+    if status == "Ate something else":
+        logs.append({"id": uid(), "d": date, "meal": slot, "name": actual.strip(), "plan_ref": meal["id"],
+                     "planned": meal["text"], "kcal": 0, "p": 0, "c": 0, "f": 0, "nutrition_unknown": True})
+    save_client(c)
+    return True
+
+
 def tab_nutrition(c):
     st.markdown('<div class="th-title">Nutrition</div>', unsafe_allow_html=True)
+    d = st.date_input("Date", value=now().date(), max_value=now().date(), key="nut_date").isoformat()
     mode = st.segmented_control("View", ["Log", "Plan"], default="Log", key="nut_mode", label_visibility="collapsed") or "Log"
     mac = c["diet"]["macros"]
     if mode == "Plan":
@@ -1079,14 +1097,28 @@ def tab_nutrition(c):
             st.markdown('<div class="th-card th-empty">Your trainer has not added a meal plan yet.</div>', unsafe_allow_html=True)
         for m in meals:
             with st.container(border=True):
-                key = f"meal_{today()}_{m['id']}"
-                st.checkbox(f"{fmt_time(m['time'])} · {m['text']}", value=is_done(c, today(), "meal", m["id"]), key=key,
-                            on_change=toggle_event, args=(c["id"], "meal", m["id"], m["text"], key))
+                st.markdown(f"**{fmt_time(m['time'])} · {m['text']}**")
+                replacement = next((x for x in c.get("food_log", []) if x.get("d") == d and x.get("plan_ref") == m["id"]), None)
+                statuses = ["Not recorded", "Ate the planned meal", "Ate something else"]
+                current_status = "Ate the planned meal" if is_done(c, d, "meal", m["id"]) else "Ate something else" if replacement else "Not recorded"
+                with st.form(f"meal_response_{m['id']}_{d}"):
+                    status = st.radio("Meal status", statuses, index=statuses.index(current_status), key=f"meal_status_{m['id']}_{d}")
+                    slot = st.selectbox("Meal", MEAL_SLOTS, index=MEAL_SLOTS.index(replacement["meal"]) if replacement and replacement["meal"] in MEAL_SLOTS else 0, key=f"meal_slot_{m['id']}_{d}")
+                    actual = st.text_area("What did you eat instead?", value=replacement["name"] if replacement else "", key=f"meal_actual_{m['id']}_{d}", placeholder="Fill this in if you ate something else.")
+                    if st.form_submit_button("Save meal status", type="primary"):
+                        if save_meal_response(c["id"], d, m, status, actual, slot):
+                            st.rerun()
+                        else:
+                            st.error("Enter what you ate instead.")
+                if replacement:
+                    st.caption("Recorded instead: " + replacement["name"])
                 with st.expander("Reminder"):
                     calendar_buttons(f"ics_m_{m['id']}", f"Meal: {m['text']}", f"Daily meal reminder from {c.get('trainer') or 'your trainer'}", next_at(m["time"]), 20, True)
         return
-    d = st.date_input("Date", value=now().date(), max_value=now().date(), key="nut_date").isoformat()
+    st.caption("Record what you ate for breakfast, lunch, dinner or snacks. A trainer meal plan is not required; calories and macros are optional.")
     t = totals_for(c, d)
+    if any(x.get("d") == d and x.get("nutrition_unknown") for x in c.get("food_log", [])):
+        st.caption("Nutrition totals include only the calories and macros you entered; unestimated foods are excluded.")
     pc = lambda a, b: round(a / b * 100) if b else 0
     st.markdown(
         f'<div class="th-card th-stat">{ring_html(pc(t["kcal"], mac["kcal"]), f"{t["kcal"]:.0f}", "cal")}'
@@ -1094,18 +1126,20 @@ def tab_nutrition(c):
         f'<div><b>{pc(t["p"], mac["p"])}%</b><span>{t["p"]:.0f} g Protein</span></div></div></div>', unsafe_allow_html=True)
     for slot in MEAL_SLOTS:
         items = [x for x in c["food_log"] if x["d"] == d and x["meal"] == slot]
-        with st.expander(f"{slot} · {sum(fnum(x.get('kcal')) for x in items):.0f} kcal"):
+        with st.expander(f"{slot} · {len(items)} entries", expanded=True):
             for x in items:
                 a, b = st.columns([5, 1])
-                a.markdown(f"**{x['name']}**  \n{fnum(x.get('kcal')):.0f} kcal · P {fnum(x.get('p')):.0f} · C {fnum(x.get('c')):.0f} · F {fnum(x.get('f')):.0f}")
+                a.markdown(f"**{x['name']}**")
+                a.caption("Calories and macros not entered" if x.get("nutrition_unknown") else f"{fnum(x.get('kcal')):.0f} kcal · P {fnum(x.get('p')):.0f} · C {fnum(x.get('c')):.0f} · F {fnum(x.get('f')):.0f}")
                 if b.button("✕", key=f"fd_{x['id']}"):
                     cc = B.get(c["id"])
                     cc["food_log"] = [y for y in cc["food_log"] if y["id"] != x["id"]]
                     save_client(cc)
                     st.rerun()
             with st.form(f"food_{slot}_{d}", clear_on_submit=True):
-                nm = st.text_input("Food", key=f"fn_{slot}_{d}")
-                a, b, c2, d2 = st.columns(4)
+                nm = st.text_input("What did you eat?", placeholder="For example: idli, sambar and coffee", key=f"fn_{slot}_{d}")
+                with st.expander("Optional: calories and macros"):
+                    a, b, c2, d2 = st.columns(4)
                 kc = a.number_input("kcal", 0, 5000, 0, key=f"fk_{slot}_{d}")
                 pr = b.number_input("Protein g", 0, 500, 0, key=f"fp_{slot}_{d}")
                 cb = c2.number_input("Carbs g", 0, 800, 0, key=f"fc_{slot}_{d}")
@@ -1113,7 +1147,7 @@ def tab_nutrition(c):
                 if st.form_submit_button("Add food", type="primary"):
                     if nm.strip():
                         cc = B.get(c["id"])
-                        cc["food_log"].append({"id": uid(), "d": d, "meal": slot, "name": nm.strip(), "kcal": kc, "p": pr, "c": cb, "f": ft})
+                        cc["food_log"].append({"id": uid(), "d": d, "meal": slot, "name": nm.strip(), "kcal": kc, "p": pr, "c": cb, "f": ft, "nutrition_unknown": not any((kc, pr, cb, ft))})
                         save_client(cc)
                         st.rerun()
                     else:
