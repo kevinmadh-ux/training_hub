@@ -545,6 +545,9 @@ def phase_for(c, on=None):
         chosen = next((p for p in phases if p["id"] == active), None)
         if chosen:
             return chosen, 1, max(1, (on - dobj(c["program"]["start"])).days // 7 + 1)
+    split = next((p for p in phases if "general" not in p.get("name", "").lower() and p.get("days")), None)
+    if split:
+        return split, 1, max(1, (on - dobj(c["program"]["start"])).days // 7 + 1)
     week = max(0, (on - dobj(c["program"]["start"])).days // 7)
     acc = 0
     for ph in phases:
@@ -553,6 +556,48 @@ def phase_for(c, on=None):
             return ph, week - acc + 1, week + 1
         acc += w
     return phases[-1], week - acc + 1, week + 1
+
+
+
+def workouts_for_date(c, on):
+    """Date assignments replace the regular schedule; an empty list is a rest day."""
+    on = dobj(on) if isinstance(on, str) else on
+    overrides = c["program"].get("date_workouts", {})
+    if on.isoformat() in overrides:
+        return overrides[on.isoformat()]
+    phase, _, _ = phase_for(c, on)
+    return [d for d in (phase["days"] if phase else []) if d["weekday"] in (on.weekday(), -1)]
+
+
+def builder_date_action(action):
+    if not ss.get("trainer_ok"):
+        return
+    cid = ss.get("bld_client")
+    current = B.get(cid)
+    if not current:
+        return
+    date = ss["bld_date"].isoformat()
+    overrides = current["program"].setdefault("date_workouts", {})
+    if action == "restore":
+        overrides.pop(date, None)
+    elif action == "remove":
+        overrides[date] = []
+    else:
+        draft = builder_draft(cid)
+        phase = next((p for p in draft["program"]["phases"] if p["id"] == ss.get("bld_phase")), None)
+        day = next((d for d in (phase["days"] if phase else []) if d["id"] == ss.get("bld_day")), None)
+        if not day or not day["exercises"]:
+            ss["_bld_msg"] = ("error", "Select a saved workout with exercises first.")
+            return
+        assigned = copy.deepcopy(day)
+        assigned["id"] = uid()
+        for exercise in assigned["exercises"]:
+            exercise["id"] = uid()
+        overrides[date] = [assigned]
+    save_client(current)
+    draft = builder_draft(cid)
+    draft["program"]["date_workouts"] = copy.deepcopy(overrides)
+    ss["_bld_msg"] = ("ok", f"Workout for {current['name']} on {date} updated. Regular workouts remain saved.")
 
 
 def seed_clients():
@@ -831,8 +876,8 @@ def tab_home(c, lib_map):
     phase, wk, overall = phase_for(c)
     tasks = []
     if phase:
-        for d in phase["days"]:
-            if d["weekday"] in (t.weekday(), -1) and d["exercises"] and not day_done(c, today(), d):
+        for d in workouts_for_date(c, t.date()):
+            if d["exercises"] and not day_done(c, today(), d):
                 tasks.append(f"Workout: {d['title']} · {len(d['exercises'])} exercises")
     last = c["checkins"][-1]["d"] if c["checkins"] else None
     if not last or (t.date() - dobj(last)).days >= 7:
@@ -894,7 +939,7 @@ def tab_training(c, lib_map):
         return guided_workout(c, lib_map)
     st.markdown('<div class="th-title">Training</div>', unsafe_allow_html=True)
     phase, wk, overall = phase_for(c)
-    if not phase or not phase["days"]:
+    if not phase:
         st.markdown('<div class="th-card th-empty">Your trainer has not added a workout plan yet.</div>', unsafe_allow_html=True)
         return
     st.caption(f"{phase['name']} · week {wk if phase.get('weeks') else overall}")
@@ -903,27 +948,27 @@ def tab_training(c, lib_map):
     dates = [monday + dt.timedelta(days=i) for i in range(7)]
 
     def lab(i):
-        done = any(day_done(c, dates[i].isoformat(), dy) for dy in phase["days"])
+        done = any(day_done(c, dates[i].isoformat(), dy) for dy in workouts_for_date(c, dates[i]))
         return f"{WEEKDAYS[i]} {dates[i].day}{' ✓' if done else ''}"
 
     sel = st.segmented_control("Day", list(range(7)), format_func=lab, default=td.weekday(), key="train_day", label_visibility="collapsed")
     sel = td.weekday() if sel is None else sel
     sel_date = dates[sel].isoformat()
     editable = sel_date == td.isoformat()
-    todays = [d for d in phase["days"] if d["weekday"] in (sel, -1)]
+    todays = workouts_for_date(c, sel_date)
     if not todays:
         st.markdown('<div class="th-card th-empty">NO WORKOUTS ON THIS DAY</div>', unsafe_allow_html=True)
     for d in todays:
         workout_card(c, d, lib_map, sel_date, editable)
 
-    week_ex = [e for d in phase["days"] if d["weekday"] != -1 for e in d["exercises"]]
+    week_ex = [e for date in dates for d in workouts_for_date(c, date) for e in d["exercises"]]
     done_week = sum(1 for e in c["events"] if e["k"] == "ex" and e["d"] >= monday.isoformat() and e["d"] <= dates[6].isoformat())
     with st.container(border=True):
         h1, h2 = st.columns([2, 1])
         h1.markdown("**Training progress**")
         h2.markdown(pill(f"{done_week} / {len(week_ex)} this week"), unsafe_allow_html=True)
         a, b = st.columns([2, 1])
-        nxt = next((d for d in phase["days"] if d["weekday"] in (td.weekday(), -1) and not day_done(c, today(), d)), None)
+        nxt = next((d for d in workouts_for_date(c, td) if not day_done(c, today(), d)), None)
         a.markdown(f"**Next session**  \n{nxt['title'] if nxt else 'All done. You are all caught up.'}")
         b.markdown(f"**{streak(c)}**  \nday streak")
 
@@ -931,7 +976,7 @@ def tab_training(c, lib_map):
 def guided_workout(c, lib_map):
     gw = ss["gw"]
     phase, _, _ = phase_for(c)
-    day = next((d for d in (phase["days"] if phase else []) if d["id"] == gw["day"]), None)
+    day = next((d for d in workouts_for_date(c, today()) if d["id"] == gw["day"]), None)
     if not day or not day["exercises"]:
         ss["gw"] = None
         st.rerun()
@@ -1869,6 +1914,7 @@ def builder_apply():
     phase = next(p for p in program["phases"] if p["id"] == program["active_phase"])
     program.pop("general_until", None)
     program.pop("resume_phase", None)
+    program["date_workouts"] = copy.deepcopy(current["program"].get("date_workouts", {}))
     current["program"] = program
     save_client(current)
     draft["program"] = copy.deepcopy(program)
@@ -1992,6 +2038,16 @@ def page_builder(clients):
     st.caption("Choose General whenever needed. Apply Split program when the client is ready to return. Both plans stay saved; switching is manual.")
     st.caption("Add and remove exercises in your draft, then press Apply to update the client page.")
     st.button("Apply workout to client", type="primary", on_click=builder_apply)
+    with st.expander("Remove or replace a workout on a specific date", expanded=True):
+        st.date_input("Workout date", value=now().date(), key="bld_date")
+        st.caption("Select General or Split program and a workout above. Replace assigns it only to this date; Remove leaves this date without a workout.")
+        x, y, z = st.columns(3)
+        x.button("Replace this date with selected workout", on_click=builder_date_action, args=("replace",), disabled=did == "__new__")
+        y.button("Remove workout for this date", on_click=builder_date_action, args=("remove",))
+        z.button("Restore regular workout for this date", on_click=builder_date_action, args=("restore",))
+        assigned = workouts_for_date(client, ss["bld_date"])
+        st.caption("Assigned: " + (", ".join(d["title"] for d in assigned) if assigned else "No workout"))
+
     others = [x for x in clients if x["id"] != cid]
     oids = [x["id"] for x in others]
     ss["bld_also"] = [i for i in ss.get("bld_also", []) if i in oids]
