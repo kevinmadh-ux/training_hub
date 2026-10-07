@@ -295,6 +295,45 @@ def test_activity_log_updates_same_day_without_assigned_habits(env):
     assert not at.exception
 
 
+def test_guided_workout_and_optional_bonus_completion(env):
+    import datetime as dt
+    at = trainer_seeded(env)
+    client = clients_by_name(env)["Anton"]
+    at.radio(key="page").set_value("Workout builder").run()
+    at.selectbox(key="bld_client").set_value(client["id"]).run()
+    split = next(p for p in client["program"]["phases"] if p["name"] == "Split program")
+    at.selectbox(key="bld_phase").set_value(split["id"]).run()
+    at.checkbox(key="bld_bonus").check().run()
+    next(b for b in at.button if b.label == "ADD").click().run()
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    rows = store(env)
+    client = rows[client["id"]]
+    client.update(onboarded=True, must_change_pin=False)
+    (env / "store.json").write_text(json.dumps(rows))
+    at.session_state["trainer_ok"] = False
+    at.session_state["mode"] = "client"
+    at.session_state["client_id"] = client["id"]
+    at.session_state["nav"] = "🏋️"
+    at.run()
+    at.segmented_control(key="train_day").set_value(0).run()
+    date = (dt.date.today() - dt.timedelta(days=dt.date.today().weekday())).isoformat()
+    next(b for b in at.button if b.label == "Start workout").click().run()
+    next(b for b in at.button if b.label == "Mark exercise done and next").click().run()
+    next(b for b in at.button if b.label == "Mark exercise done").click().run()
+    next(b for b in at.button if b.label == "Complete workout").click().run()
+    saved = store(env)[client["id"]]
+    assert len([e for e in saved["events"] if e["d"] == date and e["k"] == "ex"]) == 2
+    assert any(e["d"] == date and e["k"] == "workout" for e in saved["events"])
+    assert not any(e["k"] == "bonus_workout" for e in saved["events"])
+    next(b for b in at.button if b.label == "Start bonus workout").click().run()
+    next(b for b in at.button if b.label == "Mark exercise done").click().run()
+    next(b for b in at.button if b.label == "Complete bonus workout").click().run()
+    saved = store(env)[client["id"]]
+    assert any(e["d"] == date and e["k"] == "bonus_workout" for e in saved["events"])
+    assert any(e.get("bonus") for e in saved["events"])
+    assert not at.exception
+
+
 def test_builder_adds_selected_exercises_to_a_new_day(env):
     at = trainer_seeded(env)
     venky = clients_by_name(env)["Venky"]["id"]
