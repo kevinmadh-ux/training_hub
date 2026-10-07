@@ -1037,8 +1037,53 @@ def guided_workout(c, lib_map):
     d_.button("Exit", on_click=lambda: ss.__setitem__("gw", None), width="stretch")
 
 
+
+def activity_progress(c):
+    st.subheader("Daily activity")
+    date = st.date_input("Activity date", value=now().date(), max_value=now().date(), key="activity_date").isoformat()
+    entry = next((x for x in c.get("activity_log", []) if x["d"] == date), {})
+    st.caption("Enter steps and calories burned from your watch, phone or activity tracker. These are recorded values, not automatic measurements.")
+    with st.form(f"activity_{date}"):
+        steps = st.number_input("Steps walked or run", min_value=0, max_value=200000, value=int(entry.get("steps", 0)), key=f"steps_{date}")
+        burned = st.number_input("Calories burned (kcal)", min_value=0, max_value=20000, value=int(entry.get("burned_kcal", 0)), key=f"burned_{date}")
+        if st.form_submit_button("Save activity", type="primary"):
+            cc = B.get(c["id"])
+            entries = cc.setdefault("activity_log", [])
+            entries[:] = [x for x in entries if x["d"] != date]
+            entries.append({"d": date, "steps": steps, "burned_kcal": burned})
+            save_client(cc)
+            st.rerun()
+    history = sorted(c.get("activity_log", []), key=lambda x: x["d"])
+    if history:
+        last = history[-1]
+        a, b = st.columns(2)
+        a.metric("Steps · " + last["d"], f"{last['steps']:,}")
+        b.metric("Calories burned · " + last["d"], f"{last['burned_kcal']:,} kcal")
+        frame = pd.DataFrame(history[-30:]).assign(date=lambda f: pd.to_datetime(f["d"])).set_index("date")
+        st.caption("Progress on recorded days (up to the last 30 entries)")
+        st.line_chart(frame[["steps"]], y_label="Steps")
+        st.line_chart(frame[["burned_kcal"]], y_label="Calories burned")
+    else:
+        st.info("Save your first activity entry to start tracking progress.")
+
+
+def nutrition_progress(c):
+    st.markdown("**Diet progress · last 7 days**")
+    start = now().date() - dt.timedelta(days=6)
+    logged_days = {x["d"] for x in c.get("food_log", []) if start.isoformat() <= x["d"] <= today()}
+    planned = {(x["d"], x["ref"]) for x in c["events"] if x["k"] == "meal" and start.isoformat() <= x["d"] <= today()}
+    alternatives = {(x["d"], x["plan_ref"]) for x in c.get("food_log", []) if x.get("plan_ref") and start.isoformat() <= x["d"] <= today()}
+    a, b, d = st.columns(3)
+    a.metric("Days with food entries", len(logged_days))
+    b.metric("Planned meals eaten", len(planned))
+    d.metric("Meals replaced", len(alternatives))
+    st.caption("Meal entries and completion records track your diet. Calories burned and steps are tracked in Habit.")
+
+
 def tab_habit(c):
     st.markdown('<div class="th-title">Habit</div>', unsafe_allow_html=True)
+    activity_progress(c)
+    st.subheader("Daily habits")
     habits = c["habits"]
     if not habits:
         st.markdown('<div class="th-card th-empty">Your trainer has not assigned any habits yet.</div>', unsafe_allow_html=True)
@@ -1090,6 +1135,13 @@ def tab_nutrition(c):
     d = st.date_input("Date", value=now().date(), max_value=now().date(), key="nut_date").isoformat()
     mode = st.segmented_control("View", ["Log", "Plan"], default="Log", key="nut_mode", label_visibility="collapsed") or "Log"
     mac = c["diet"]["macros"]
+    nutrition_progress(c)
+    with st.expander("Trainer’s suggestions"):
+        if c["diet"]["meals"]:
+            st.write(f"Daily targets: {mac['kcal']} kcal · Protein {mac['p']} g · Carbs {mac['c']} g · Fat {mac['f']} g")
+            st.caption("Open Plan to view your trainer’s meals and record whether you followed them.")
+        else:
+            st.info("Your trainer has not added diet suggestions yet. You can still record your meals in Log.")
     if mode == "Plan":
         st.markdown(f'<div class="th-card"><b>Daily targets</b><div class="th-macros" style="margin-top:12px"><div><b>{mac["kcal"]}</b><span>kcal</span></div><div><b>{mac["p"]} g</b><span>Protein</span></div><div><b>{mac["c"]} g</b><span>Carbs</span></div></div><div class="th-note" style="margin-top:10px">Fat {mac["f"]} g · Diet: {esc(c["profile"].get("diet") or "not set")}</div></div>', unsafe_allow_html=True)
         meals = c["diet"]["meals"]
@@ -1138,7 +1190,7 @@ def tab_nutrition(c):
                     st.rerun()
             with st.form(f"food_{slot}_{d}", clear_on_submit=True):
                 nm = st.text_input("What did you eat?", placeholder="For example: idli, sambar and coffee", key=f"fn_{slot}_{d}")
-                with st.expander("Optional: calories and macros"):
+                with st.expander("Calories and macros (optional client entry)"):
                     a, b, c2, d2 = st.columns(4)
                 kc = a.number_input("kcal", 0, 5000, 0, key=f"fk_{slot}_{d}")
                 pr = b.number_input("Protein g", 0, 500, 0, key=f"fp_{slot}_{d}")
