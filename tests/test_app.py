@@ -139,6 +139,22 @@ def test_wrong_trainer_password_is_rejected(env):
     assert any("not correct" in e.value for e in at.error)
 
 
+def test_delete_saved_workout_removes_only_selected_template(env):
+    at = trainer_seeded(env)
+    at.radio(key="page").set_value("Workout builder").run()
+    cid = at.session_state["bld_client"]
+    before = store(env)[cid]["program"]
+    phase = next(p for p in before["phases"] if p["id"] == at.session_state["bld_phase"])
+    removed = phase["days"][0]["id"]
+    retained = [d for d in phase["days"] if d["id"] != removed]
+    at.button(key=f"delete_saved_{cid}_{removed}").click().run()
+    assert not at.exception
+    after = store(env)[cid]["program"]
+    assert next(p for p in after["phases"] if p["id"] == phase["id"])["days"] == retained
+    assert all(d["id"] != removed for p in at.session_state["builder_drafts"][cid]["program"]["phases"] for d in p["days"])
+    assert at.selectbox(key="bld_day").value != removed
+
+
 def test_seed_creates_the_ten_clients_and_plans(env):
     trainer_seeded(env)
     by = clients_by_name(env)
