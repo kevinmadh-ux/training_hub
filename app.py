@@ -1016,9 +1016,8 @@ def tab_training(c, lib_map):
         a.markdown(f"**Next session**  \n{nxt['title'] if nxt else 'All done. You are all caught up.'}")
         b.markdown(f"**{streak(c)}**  \nday streak")
     with st.container(border=True):
-        st.markdown("**🔥 Streak rewards · Coming soon**")
-        st.write("Build your workout streak to unlock premium workouts.")
-        st.caption("Keep showing up—every workout day adds to your streak. Your trainer will announce the unlock target and premium workouts.")
+        st.markdown("**🔥 Streak rewards**")
+        st.write("Build your workout streak to unlock premium diets and workouts.")
 
 
 
