@@ -2017,6 +2017,29 @@ def builder_day_label(phase, day_id):
     return f"{title} · {len(day['exercises'])} exercises"
 
 
+def builder_delete_saved_workout(day_id):
+    if not ss.get("trainer_ok"):
+        return
+    cid = ss.get("bld_client")
+    current = B.get(cid)
+    draft = builder_draft(cid)
+    if not current or not draft:
+        return
+    phase_id = ss.get("bld_phase")
+    title = None
+    for row in (current, draft):
+        for phase in row["program"]["phases"]:
+            if phase["id"] == phase_id:
+                day = next((d for d in phase["days"] if d["id"] == day_id), None)
+                if day:
+                    title = day["title"]
+                phase["days"] = [d for d in phase["days"] if d["id"] != day_id]
+    save_client(current)
+    if ss.get("bld_day") == day_id:
+        ss.pop("bld_day", None)
+    ss["_bld_msg"] = ("ok", f"Removed saved workout: {title or 'workout'}. Date-specific assignments remain unchanged.")
+
+
 def builder_reset_draft():
     ss.get("builder_drafts", {}).pop(ss.get("bld_client"), None)
     ss.pop("bld_day", None)
@@ -2087,6 +2110,14 @@ def page_builder(clients):
         ss["bld_day"] = dopts[0]
     dlabel = lambda i: builder_day_label(phase, i)
     did = c3.selectbox("Saved workout", dopts, key="bld_day", format_func=dlabel)
+    with st.expander("Remove unwanted saved workouts", expanded=True):
+        st.caption("Remove deletes this saved workout from this client's phase and regular schedule. Workouts already assigned to specific dates stay as they are.")
+        if not phase["days"]:
+            st.caption("No saved workouts in this phase.")
+        for saved_day in phase["days"]:
+            label_col, remove_col = st.columns([5, 1])
+            label_col.write(builder_day_label(phase, saved_day["id"]))
+            remove_col.button("✕ Remove", key=f"delete_saved_{cid}_{saved_day['id']}", on_click=builder_delete_saved_workout, args=(saved_day["id"],))
     if did == "__new__":
         n1, n2 = st.columns([2, 1])
         n1.text_input("New day name", key="bld_newname", placeholder="Chest day")
