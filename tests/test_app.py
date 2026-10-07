@@ -97,9 +97,23 @@ def test_builder_apply_replaces_removed_monday(env):
     next(b for b in at.button if b.label == "Remove workout for this date").click().run()
     assert clients_by_name(env)["Anton"]["program"]["date_workouts"]["2026-10-05"] == []
     next(b for b in at.button if b.label == "Apply workout to client").click().run()
-    saved = clients_by_name(env)["Anton"]["program"]["date_workouts"]["2026-10-05"]
+    program = clients_by_name(env)["Anton"]["program"]
+    assert "2026-10-05" not in program["date_workouts"]
+    saved = next(p for p in program["phases"] if p["id"] == split["id"])["days"]
     assert saved[0]["title"] == split["days"][0]["title"]
     assert len(saved[0]["exercises"]) == 2
+    assert saved[0]["weekday"] == 0
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    again = clients_by_name(env)["Anton"]["program"]
+    assert again == program
+    import ast
+    import datetime as dt
+    tree = ast.parse(Path(APP).read_text())
+    functions = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {"phase_for", "workouts_for_date"}]
+    ns = {"dobj": dt.date.fromisoformat, "now": lambda: dt.datetime(2026, 10, 5)}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), APP, "exec"), ns)
+    for date in ("2026-10-05", "2026-10-12", "2026-10-19"):
+        assert ns["workouts_for_date"]({"program": program}, date)[0]["id"] == saved[0]["id"]
     assert not at.exception
 
 
