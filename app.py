@@ -1017,7 +1017,7 @@ def tab_training(c, lib_map):
         b.markdown(f"**{streak(c)}**  \nday streak")
     with st.container(border=True):
         st.markdown("**🔥 Streak rewards**")
-        st.write("Build your workout streak to unlock premium diets and workouts.")
+        st.write("🔓 Build your workout streak to unlock premium diets 🥗 and workouts 💪.")
 
 
 
