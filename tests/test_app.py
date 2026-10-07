@@ -100,6 +100,28 @@ def test_builder_apply_replaces_removed_monday(env):
     assert saved[0]["title"] == split["days"][0]["title"]
     assert len(saved[0]["exercises"]) == 2
     assert not at.exception
+
+
+def test_general_applies_only_to_chosen_date_and_cancel_is_available(env):
+    import datetime as dt
+    at = trainer_seeded(env)
+    at.radio(key="page").set_value("Workout builder").run()
+    anton = clients_by_name(env)["Anton"]
+    at.selectbox(key="bld_client").set_value(anton["id"]).run()
+    general = next(p for p in anton["program"]["phases"] if p["name"] == "General")
+    split = next(p for p in anton["program"]["phases"] if p["name"] == "Split program")
+    at.selectbox(key="bld_phase").set_value(general["id"]).run()
+    assert any(b.label == "Cancel workout changes" for b in at.button)
+    at.selectbox(key="bld_target_weekday").set_value(4).run()
+    assert at.date_input(key="bld_date").value.weekday() == 4
+    at.date_input(key="bld_date").set_value(dt.date(2026, 10, 15)).run()
+    assert at.selectbox(key="bld_target_weekday").value == 3
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    program = clients_by_name(env)["Anton"]["program"]
+    assert program["active_phase"] == split["id"]
+    assert list(program["date_workouts"]) == ["2026-10-15"]
+    assert program["date_workouts"]["2026-10-15"][0]["title"] == general["days"][0]["title"]
+    assert not at.exception
     at.selectbox(key="bld_day").set_value("__new__").run()
     at.text_input(key="bld_newname").set_value("Unfinished")
     next(b for b in at.button if b.label == "Cancel new day").click().run()
@@ -261,7 +283,8 @@ def test_general_switch_is_manual_and_keeps_split(env):
     at.selectbox(key="bld_phase").set_value(general["id"]).run()
     next(b for b in at.button if b.label == "Apply workout to client").click().run()
     program = store(env)[cid]["program"]
-    assert program["active_phase"] == general["id"]
+    assert program["active_phase"] == split["id"]
+    assert program["date_workouts"][at.date_input(key="bld_date").value.isoformat()][0]["title"] == general["days"][0]["title"]
     assert "general_until" not in program
     assert program["phases"][1] == split
     assert not any("how many days" in x.label for x in at.selectbox)
