@@ -2009,6 +2009,53 @@ def builder_cancel_new_day():
             ss[key] = False
 
 
+
+import streamlit.components.v2 as components_v2
+
+saved_workout_dropdown = components_v2.component(
+    "saved_workout_dropdown",
+    html='<div class="picker"></div>',
+    css="""
+.picker {font-family:sans-serif;color:#f2f3f5;}
+label {display:block;font-size:14px;margin-bottom:8px;}
+details {background:#262730;border:1px solid #444650;border-radius:8px;}
+summary {padding:10px 12px;cursor:pointer;list-style:none;}
+summary::after {content:"▾";float:right;}
+.menu {max-height:280px;overflow:auto;padding:4px;border-top:1px solid #444650;}
+.row {display:flex;align-items:center;border-radius:5px;}
+.row:hover {background:#353741;}
+button {font:inherit;color:inherit;border:0;background:transparent;cursor:pointer;}
+.choose {flex:1;text-align:left;padding:10px;}
+.remove {font-size:20px;padding:6px 12px;color:#ff9090;}
+button:focus-visible,summary:focus-visible {outline:2px solid #4a94f2;}
+""",
+    js="""
+export default function({data,parentElement,setTriggerValue}) {
+ const root=parentElement.querySelector('.picker'); root.replaceChildren();
+ const label=document.createElement('label');label.textContent='Saved workout';
+ const details=document.createElement('details'), summary=document.createElement('summary');
+ summary.textContent=data.options.find(o=>o.id===data.selected)?.label || 'Choose workout';
+ details.append(summary);
+ const menu=document.createElement('div');menu.className='menu';
+ for(const option of data.options){
+  const row=document.createElement('div');row.className='row';
+  const choose=document.createElement('button');choose.type='button';choose.className='choose';choose.textContent=option.label;
+  choose.onclick=()=>{details.open=false;setTriggerValue('action',{kind:'select',id:option.id});};row.append(choose);
+  if(option.id!=='__new__'){
+   const remove=document.createElement('button');remove.type='button';remove.className='remove';remove.textContent='×';
+   remove.title='Remove saved workout';remove.setAttribute('aria-label','Remove '+option.label);
+   remove.onclick=e=>{e.stopPropagation();setTriggerValue('action',{kind:'remove',id:option.id});};row.append(remove);
+  }menu.append(row);
+ }
+ details.append(menu);root.append(label,details);
+ const close=e=>{if(!e.composedPath().includes(details))details.open=false;};
+ const escape=e=>{if(e.key==='Escape')details.open=false;};
+ document.addEventListener('click',close);root.addEventListener('keydown',escape);
+ return ()=>{document.removeEventListener('click',close);root.removeEventListener('keydown',escape);};
+}
+""",
+)
+
 def builder_day_label(phase, day_id):
     if day_id == "__new__":
         return "＋ Create workout…"
@@ -2109,15 +2156,20 @@ def page_builder(clients):
     if ss.get("bld_day") not in dopts:
         ss["bld_day"] = dopts[0]
     dlabel = lambda i: builder_day_label(phase, i)
-    did = c3.selectbox("Saved workout", dopts, key="bld_day", format_func=dlabel)
-    with st.expander("Remove unwanted saved workouts", expanded=True):
-        st.caption("Remove deletes this saved workout from this client's phase and regular schedule. Workouts already assigned to specific dates stay as they are.")
-        if not phase["days"]:
-            st.caption("No saved workouts in this phase.")
-        for saved_day in phase["days"]:
-            label_col, remove_col = st.columns([5, 1])
-            label_col.write(builder_day_label(phase, saved_day["id"]))
-            remove_col.button("✕ Remove", key=f"delete_saved_{cid}_{saved_day['id']}", on_click=builder_delete_saved_workout, args=(saved_day["id"],))
+    with c3:
+        result = saved_workout_dropdown(
+            key=f"saved_picker_{cid}_{pid}",
+            data={"selected": ss["bld_day"], "options": [{"id": i, "label": dlabel(i)} for i in dopts]},
+            on_action_change=lambda: None,
+        )
+    action = result.action
+    if action and action.get("id") in dopts:
+        if action.get("kind") == "remove" and action["id"] != "__new__":
+            builder_delete_saved_workout(action["id"])
+        elif action.get("kind") == "select":
+            ss["bld_day"] = action["id"]
+        st.rerun()
+    did = ss["bld_day"]
     if did == "__new__":
         n1, n2 = st.columns([2, 1])
         n1.text_input("New day name", key="bld_newname", placeholder="Chest day")
