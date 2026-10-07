@@ -2100,6 +2100,38 @@ def builder_draft(cid):
     return drafts[cid]
 
 
+
+def builder_copy_to_days():
+    if not ss.get("trainer_ok"):
+        return
+    cid = ss.get("bld_client")
+    current = B.get(cid)
+    draft = builder_draft(cid)
+    phase = next((p for p in draft["program"]["phases"] if p["id"] == ss.get("bld_phase")), None) if draft else None
+    day = next((d for d in phase["days"] if d["id"] == ss.get("bld_day")), None) if phase else None
+    if not current or not day or not day["exercises"]:
+        ss["_bld_msg"] = ("error", "Select a saved workout with exercises first.")
+        return
+    anchor = ss.get("bld_date") or now().date()
+    monday = anchor - dt.timedelta(days=anchor.weekday())
+    overrides = current["program"].setdefault("date_workouts", {})
+    dates = []
+    for weekday in ss.get("bld_copy_days", []):
+        date = (monday + dt.timedelta(days=weekday)).isoformat()
+        assigned = copy.deepcopy(day)
+        assigned["id"] = uid()
+        assigned["weekday"] = weekday
+        assigned["allow_swaps"] = phase["name"] == "General"
+        for exercise in assigned["exercises"] + assigned.get("bonus_exercises", []):
+            exercise["id"] = uid()
+        overrides[date] = [assigned]
+        dates.append(date)
+    if dates:
+        save_client(current)
+        draft["program"]["date_workouts"] = copy.deepcopy(overrides)
+        ss["_bld_msg"] = ("ok", f"Copied {day['title']} to {', '.join(dates)} for {current['name']}.")
+
+
 def builder_apply():
     cid = ss.get("bld_client")
     draft = builder_draft(cid)
@@ -2407,6 +2439,15 @@ def page_builder(clients):
         z.button("Restore regular workout for this date", on_click=builder_date_action, args=("restore",))
         assigned = workouts_for_date(client, ss["bld_date"])
         st.caption("Assigned: " + (", ".join(d["title"] for d in assigned) if assigned else "No workout"))
+
+    with st.expander("Copy workout to other days", expanded=True):
+        st.multiselect("Copy to days", list(range(7)), key="bld_copy_days",
+                       format_func=lambda i: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][i])
+        anchor = ss["bld_date"]
+        monday = anchor - dt.timedelta(days=anchor.weekday())
+        st.caption(f"Copies the selected saved workout, including bonus exercises, in the week of {monday:%b %d, %Y}. Existing workouts on those dates are replaced. Other weeks stay unchanged.")
+        st.button("Copy workout to selected days", on_click=builder_copy_to_days,
+                  disabled=did == "__new__" or not ss.get("bld_copy_days"))
 
     others = [x for x in clients if x["id"] != cid]
     oids = [x["id"] for x in others]
