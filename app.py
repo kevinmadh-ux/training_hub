@@ -1872,7 +1872,36 @@ def builder_apply():
     current["program"] = program
     save_client(current)
     draft["program"] = copy.deepcopy(program)
+    day = next((d for d in phase["days"] if d["id"] == ss.get("bld_day")), None)
+    copied_names = []
+    if day:
+        for target_id in ss.get("bld_also", []):
+            if target_id == cid:
+                continue
+            target = B.get(target_id)
+            if not target:
+                continue
+            target_phase = next((p for p in target["program"]["phases"] if
+                ("General" if "general" in p.get("name", "").lower() else "Split program") == phase["name"]), None)
+            if target_phase is None:
+                target_phase = new_phase(phase["name"], 0, [])
+                target["program"]["phases"].append(target_phase)
+            copied_day = copy.deepcopy(day)
+            copied_day["id"] = uid()
+            for exercise in copied_day["exercises"]:
+                exercise["id"] = uid()
+            match = next((n for n, d in enumerate(target_phase["days"]) if
+                d["title"].strip().lower() == day["title"].strip().lower()), None)
+            if match is None:
+                target_phase["days"].append(copied_day)
+            else:
+                target_phase["days"][match] = copied_day
+            save_client(target)
+            ss.get("builder_drafts", {}).pop(target_id, None)
+            copied_names.append(target["name"])
     ss["_bld_msg"] = ("ok", f"Applied workout plan to {current['name']}. Removed exercises are removed from the client plan too.")
+    if copied_names:
+        ss["_bld_msg"] = ("ok", ss["_bld_msg"][1] + f" Copied {day['title']} to {', '.join(copied_names)}.")
 
 
 def builder_add(lib_ids):
@@ -1967,7 +1996,9 @@ def page_builder(clients):
     oids = [x["id"] for x in others]
     ss["bld_also"] = [i for i in ss.get("bld_also", []) if i in oids]
     o1, o2, o3 = st.columns([2, 1, 1])
-    o1.caption("Changes apply to the selected client.")
+    o1.multiselect("Also copy this day to clients", oids, key="bld_also",
+        format_func=lambda i: next(x["name"] for x in others if x["id"] == i))
+    o1.caption("Apply also copies the selected day to these clients in the same phase. A day with the same name is replaced; their other days and active phase stay as they are.")
     o2.text_input("Sets for added exercises", key="bld_sets", placeholder="library default")
     o3.text_input("Reps for added exercises", key="bld_reps", placeholder="library default")
     if did != "__new__":
