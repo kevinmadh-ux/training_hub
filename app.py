@@ -540,6 +540,11 @@ def phase_for(c, on=None):
     if not phases:
         return None, 0, 0
     on = on or now().date()
+    active = c["program"].get("active_phase")
+    if active:
+        chosen = next((p for p in phases if p["id"] == active), None)
+        if chosen:
+            return chosen, 1, max(1, (on - dobj(c["program"]["start"])).days // 7 + 1)
     week = max(0, (on - dobj(c["program"]["start"])).days // 7)
     acc = 0
     for ph in phases:
@@ -573,7 +578,7 @@ def seed_clients():
             new_day("Day 5 · Shoulder & Legs", [ex("Dumbbell Seated Shoulder Press"), ex("Dumbbell Seated Lateral Raise"), ex("Dumbbell Shrug"),
                                                   ex("Angled Leg Press Machine"), ex("Seated Leg Extension"), ex("Seated Leg Curl")], 4),
         ]
-        return [new_phase("Week 1 · General", 1, [general]), new_phase("Split programme", 0, days)]
+        return [new_phase("General", 0, [general]), new_phase("Split program", 0, days)]
 
     def screenshot_program():
         return [new_phase("Programme", 0, [
@@ -1725,6 +1730,25 @@ def page_library():
                 lib.append({"id": "lib_" + slug(nm) + "_" + uid()[:4], "name": nm.strip(), "group": grp, "equipment": eq, "sets": sets, "reps": reps, "rest": rest, "target": tgt, "cue": cue, "media": "", "video": normalize_link(vid), "tags": [t for t in tags_new if t != grp]})
                 save_lib(lib)
                 st.rerun()
+    clients = load_all(B.kind)
+    basket = ss.setdefault("general_basket", [])
+    with st.expander(f"Build a General workout ({len(basket)} selected)", expanded=True):
+        if clients:
+            target = st.selectbox("Client for General workout", [c["id"] for c in clients], format_func=lambda i: next(c["name"] for c in clients if c["id"] == i))
+            selected = st.multiselect("Selected exercises — remove any you do not want", [l["id"] for l in lib], default=basket, format_func=lambda i: next(l["name"] for l in lib if l["id"] == i))
+            ss["general_basket"] = selected
+            if st.button("Send selection to General draft", disabled=not selected):
+                draft = builder_draft(target)
+                phase = next((p for p in draft["program"]["phases"] if p["name"] == "General"), None)
+                if phase is None:
+                    phase = new_phase("General", 0, [])
+                    draft["program"]["phases"].insert(0, phase)
+                phase["days"] = [new_day("General · Full body", [ex_from_lib(l) for i in selected for l in lib if l["id"] == i])]
+                ss["bld_client"], ss["bld_phase"] = target, phase["id"]
+                ss["bld_day"] = phase["days"][0]["id"]
+                st.success("General draft ready. Open Workout builder, review it, and press Apply.")
+        else:
+            st.info("Add a client first.")
     q = st.text_input("Search", placeholder="Search exercises…")
     for grp in LIB_GROUPS:
         items = [l for l in lib if l["group"] == grp and (not q or q.lower() in l["name"].lower())]
@@ -1732,6 +1756,9 @@ def page_library():
             continue
         st.subheader(glabel(grp))
         for l in items:
+            if st.button("Select for General", key=f"general_pick_{l['id']}", disabled=l["id"] in ss.get("general_basket", [])):
+                ss["general_basket"].append(l["id"])
+                st.rerun()
             with st.expander(f"{l['name']}  ·  {l['sets']}×{l['reps']}  ·  {'🎬 animation' if l.get('media') else '🔗 link' if (l.get('video') or '').strip() else '— no video'}"):
                 with st.form(f"lib_{l['id']}"):
                     a, b = st.columns([3, 1.4])
@@ -1814,9 +1841,41 @@ def add_to_day(day, lib_ids, libmap, sets, reps):
     return added, skipped
 
 
+def builder_draft(cid):
+    drafts = ss.setdefault("builder_drafts", {})
+    if cid not in drafts:
+        c = B.get(cid)
+        if not c:
+            return None
+        drafts[cid] = copy.deepcopy(c)
+        for p in drafts[cid]["program"]["phases"]:
+            if "general" in p["name"].lower():
+                p["name"] = "General"
+            elif "split" in p["name"].lower():
+                p["name"] = "Split program"
+    return drafts[cid]
+
+
+def builder_apply():
+    cid = ss.get("bld_client")
+    draft = builder_draft(cid)
+    current = B.get(cid)
+    if not draft or not current:
+        return
+    program = copy.deepcopy(draft["program"])
+    program["active_phase"] = ss.get("bld_phase")
+    phase = next(p for p in program["phases"] if p["id"] == program["active_phase"])
+    program.pop("general_until", None)
+    program.pop("resume_phase", None)
+    current["program"] = program
+    save_client(current)
+    draft["program"] = copy.deepcopy(program)
+    ss["_bld_msg"] = ("ok", f"Applied workout plan to {current['name']}. Removed exercises are removed from the client plan too.")
+
+
 def builder_add(lib_ids):
     libmap = {l["id"]: l for l in get_lib()}
-    c = B.get(ss.get("bld_client") or "")
+    c = builder_draft(ss.get("bld_client") or "")
     if not c or not lib_ids:
         return
     phase = next((p for p in c["program"]["phases"] if p["id"] == ss.get("bld_phase")), None)
@@ -1838,14 +1897,7 @@ def builder_add(lib_ids):
             ss["_bld_msg"] = ("error", "Pick a day first.")
             return
     added, skipped = add_to_day(day, lib_ids, libmap, sets, reps)
-    save_client(c)
     names = [c["name"]]
-    for tid in ss.get("bld_also") or []:
-        t = B.get(tid)
-        if t:
-            add_to_day(find_or_create_day(t, day["title"], day["weekday"]), lib_ids, libmap, sets, reps)
-            save_client(t)
-            names.append(t["name"])
     for i in lib_ids:
         ss[f"bsel_{i}"] = False
     if new_day_made:
@@ -1858,14 +1910,13 @@ def builder_add(lib_ids):
 
 
 def builder_remove(day_id, ex_id):
-    c = B.get(ss.get("bld_client") or "")
+    c = builder_draft(ss.get("bld_client") or "")
     if not c:
         return
     for p in c["program"]["phases"]:
         for d in p["days"]:
             if d["id"] == day_id:
                 d["exercises"] = [e for e in d["exercises"] if e["id"] != ex_id]
-    save_client(c)
 
 
 def lib_set_link(lid, key):
@@ -1890,7 +1941,7 @@ def page_builder(clients):
         ss["bld_client"] = ids[0]
     a, b, c3 = st.columns([1.1, 1.2, 1.5])
     cid = a.selectbox("Client", ids, key="bld_client", format_func=lambda i: next(x["name"] for x in clients if x["id"] == i))
-    client = next(x for x in clients if x["id"] == cid)
+    client = builder_draft(cid)
     phases = client["program"]["phases"]
     pids = [p["id"] for p in phases]
     cur, _, _ = phase_for(client)
@@ -1907,11 +1958,14 @@ def page_builder(clients):
         n1, n2 = st.columns([2, 1])
         n1.text_input("New day name", key="bld_newname", placeholder="Chest day")
         n2.selectbox("Day of week", [-1] + list(range(7)), key="bld_newwd", format_func=lambda x: "Any day" if x == -1 else WEEKDAYS[x])
+    st.caption("Choose General whenever needed. Apply Split program when the client is ready to return. Both plans stay saved; switching is manual.")
+    st.caption("Add and remove exercises in your draft, then press Apply to update the client page.")
+    st.button("Apply workout to client", type="primary", on_click=builder_apply)
     others = [x for x in clients if x["id"] != cid]
     oids = [x["id"] for x in others]
     ss["bld_also"] = [i for i in ss.get("bld_also", []) if i in oids]
     o1, o2, o3 = st.columns([2, 1, 1])
-    o1.multiselect("Also add to these clients (same day name)", oids, key="bld_also", format_func=lambda i: next(x["name"] for x in others if x["id"] == i))
+    o1.caption("Changes apply to the selected client.")
     o2.text_input("Sets for added exercises", key="bld_sets", placeholder="library default")
     o3.text_input("Reps for added exercises", key="bld_reps", placeholder="library default")
     if did != "__new__":
