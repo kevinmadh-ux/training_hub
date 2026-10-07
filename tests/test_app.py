@@ -372,6 +372,33 @@ def test_general_category_swap_changes_only_assigned_date(env):
     assert not at.exception
 
 
+def test_copy_general_to_thursday_friday_preserves_source_and_weekly_split(env):
+    import datetime as dt
+    import copy
+    at = trainer_seeded(env)
+    client = clients_by_name(env)["Anton"]
+    at.radio(key="page").set_value("Workout builder").run()
+    at.selectbox(key="bld_client").set_value(client["id"]).run()
+    general = client["program"]["phases"][0]
+    at.selectbox(key="bld_phase").set_value(general["id"]).run()
+    at.date_input(key="bld_date").set_value(dt.date(2026, 10, 7)).run()
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    before = copy.deepcopy(store(env)[client["id"]]["program"])
+    at.multiselect(key="bld_copy_days").set_value([3, 4]).run()
+    next(b for b in at.button if b.label == "Copy workout to selected days").click().run()
+    after = store(env)[client["id"]]["program"]
+    assert after["phases"] == before["phases"]
+    assert after["date_workouts"]["2026-10-07"] == before["date_workouts"]["2026-10-07"]
+    for date in ("2026-10-08", "2026-10-09"):
+        copied = after["date_workouts"][date]
+        assert len(copied) == 1 and copied[0]["allow_swaps"]
+        assert [e["name"] for e in copied[0]["exercises"]] == [e["name"] for e in general["days"][0]["exercises"]]
+    assert after["date_workouts"]["2026-10-08"][0]["id"] != after["date_workouts"]["2026-10-09"][0]["id"]
+    next(b for b in at.button if b.label == "Copy workout to selected days").click().run()
+    assert len(store(env)[client["id"]]["program"]["date_workouts"]["2026-10-08"]) == 1
+    assert not at.exception
+
+
 def test_builder_adds_selected_exercises_to_a_new_day(env):
     at = trainer_seeded(env)
     venky = clients_by_name(env)["Venky"]["id"]
