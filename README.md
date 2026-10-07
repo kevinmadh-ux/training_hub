@@ -11,7 +11,7 @@ A coaching app in the HubFit style. It runs on its own web address (not on Claud
 - Habit: weekly progress and daily habit check-offs.
 - Nutrition: a food log with a calorie ring and macros, plus your meal plan with daily reminders.
 - Profile: weekly check-in, progress photo gallery (private), body-weight chart, and their details.
-- **First login:** the client enters the starter PIN you gave them, chooses their own PIN, then enters height, weight, preferred diet, goal (fat loss or muscle gain) and training style (general fitness, men's physique or bodybuilding).
+- **First login:** the client types their registered name and enters the starter PIN you gave them, chooses their own PIN, then enters height, weight, preferred diet, goal (fat loss or muscle gain) and training style (general fitness, men's physique or bodybuilding).
 
 **You (the trainer) get**
 - **Overview** dashboard with charts, check-in alerts and downloads.
@@ -116,7 +116,7 @@ service_key = "YOUR-SERVICE-ROLE-KEY"
 
 - **Animations:** only upload animations you made or have a licence to use. The app does not include any animation files.
 - **Files:** uploads are limited to 50 MB each (the Supabase free limit).
-- **Privacy:** a client who logs in sees only their own data. Progress photos are stored in a private bucket and are only read by the app on the server. The name list on the login screen shows names only.
+- **Privacy:** a client who logs in sees only their own data. Progress photos are stored in a private bucket and are only read by the app on the server. The login screen has a typed name field and does not show the client list.
 - **PIN guessing:** after 5 wrong PINs in one visit, that visit is locked. Use 4 digits that are not obvious.
 - **Steps from the phone:** the app cannot read a phone's step counter. Clients can log steps as a habit tick instead.
 - **Sleeping apps:** free Streamlit apps sleep after a few quiet days and wake with one click. Free Supabase projects pause after about a week of no use. You can restart a paused project from the Supabase dashboard and nothing is lost.
