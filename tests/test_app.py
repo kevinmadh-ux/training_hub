@@ -399,6 +399,25 @@ def test_copy_general_to_thursday_friday_preserves_source_and_weekly_split(env):
     assert not at.exception
 
 
+def test_trainer_preview_skips_onboarding_without_changing_client(env):
+    import copy
+    at = trainer_seeded(env)
+    client = clients_by_name(env)["Anton"]
+    before = copy.deepcopy(store(env))
+    at.radio(key="page").set_value("Manage clients").run()
+    at.selectbox(key="manage_pick").set_value(client["id"]).run()
+    at.button(key=f"preview_{client['id']}").click().run()
+    assert not at.exception
+    assert not any(b.label in ("Save PIN", "Continue to my plan") for b in at.button)
+    for page in ("Training", "Habit", "Nutrition", "Profile"):
+        at.radio(key="preview_nav").set_value(page).run()
+        assert not at.exception
+    assert store(env) == before
+    next(b for b in at.button if b.label == "Back to trainer").click().run()
+    assert not at.exception
+    assert "trainer_preview" not in at.session_state
+
+
 def test_builder_adds_selected_exercises_to_a_new_day(env):
     at = trainer_seeded(env)
     venky = clients_by_name(env)["Venky"]["id"]
