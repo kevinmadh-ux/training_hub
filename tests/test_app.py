@@ -83,6 +83,30 @@ def trainer_seeded(env):
     return at
 
 
+def test_builder_apply_replaces_removed_monday(env):
+    import datetime as dt
+    at = trainer_seeded(env)
+    at.radio(key="page").set_value("Workout builder").run()
+    anton = clients_by_name(env)["Anton"]
+    at.selectbox(key="bld_client").set_value(anton["id"]).run()
+    split = next(p for p in anton["program"]["phases"] if p["name"] == "Split program")
+    at.selectbox(key="bld_phase").set_value(split["id"]).run()
+    at.selectbox(key="bld_day").set_value(split["days"][0]["id"]).run()
+    at.date_input(key="bld_date").set_value(dt.date(2026, 10, 5)).run()
+    next(b for b in at.button if b.label == "Remove workout for this date").click().run()
+    assert clients_by_name(env)["Anton"]["program"]["date_workouts"]["2026-10-05"] == []
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    saved = clients_by_name(env)["Anton"]["program"]["date_workouts"]["2026-10-05"]
+    assert saved[0]["title"] == split["days"][0]["title"]
+    assert len(saved[0]["exercises"]) == 2
+    assert not at.exception
+    at.selectbox(key="bld_day").set_value("__new__").run()
+    at.text_input(key="bld_newname").set_value("Unfinished")
+    next(b for b in at.button if b.label == "Cancel new day").click().run()
+    assert at.selectbox(key="bld_day").value != "__new__"
+    assert not at.exception
+
+
 def test_wrong_trainer_password_is_rejected(env):
     at = new_app()
     at.run()
