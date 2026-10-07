@@ -594,6 +594,9 @@ def builder_date_action(action):
         for exercise in assigned["exercises"]:
             exercise["id"] = uid()
         overrides[date] = [assigned]
+        split = next((p for p in current["program"]["phases"] if "general" not in p.get("name", "").lower() and p["days"]), None)
+        if split:
+            current["program"]["active_phase"] = split["id"]
     save_client(current)
     draft = builder_draft(cid)
     draft["program"]["date_workouts"] = copy.deepcopy(overrides)
@@ -1910,8 +1913,10 @@ def builder_apply():
     if not draft or not current:
         return
     program = copy.deepcopy(draft["program"])
-    program["active_phase"] = ss.get("bld_phase")
-    phase = next(p for p in program["phases"] if p["id"] == program["active_phase"])
+    split = next((p for p in program["phases"] if p["name"] == "Split program" and p["days"]), None)
+    selected = next(p for p in program["phases"] if p["id"] == ss.get("bld_phase"))
+    program["active_phase"] = split["id"] if selected["name"] == "General" and split else selected["id"]
+    phase = next(p for p in program["phases"] if p["id"] == ss.get("bld_phase"))
     program.pop("general_until", None)
     program.pop("resume_phase", None)
     program["date_workouts"] = copy.deepcopy(current["program"].get("date_workouts", {}))
@@ -1919,8 +1924,7 @@ def builder_apply():
     assigned_date = None
     if day:
         selected_date = ss.get("bld_date") or now().date()
-        weekday = day.get("weekday", -1)
-        assigned_date = selected_date if weekday == -1 else selected_date - dt.timedelta(days=selected_date.weekday()) + dt.timedelta(days=weekday)
+        assigned_date = selected_date
         program["date_workouts"][assigned_date.isoformat()] = [copy.deepcopy(day)]
     current["program"] = program
     save_client(current)
@@ -2007,13 +2011,35 @@ def builder_cancel_new_day():
 
 def builder_day_label(phase, day_id):
     if day_id == "__new__":
-        return "＋ New day…"
+        return "＋ Create workout…"
     day = next(d for d in phase["days"] if d["id"] == day_id)
-    number = phase["days"].index(day) + 1
     title = re.sub(r"^Day\\s+\\d+\\s*[·:–-]\\s*", "", day["title"], flags=re.I)
-    weekday = day.get("weekday", -1)
-    when = "Any day" if weekday == -1 else WEEKDAYS[weekday]
-    return f"Day {number} · {title} · {when} · {len(day['exercises'])} exercises"
+    return f"{title} · {len(day['exercises'])} exercises"
+
+
+def builder_reset_draft():
+    ss.get("builder_drafts", {}).pop(ss.get("bld_client"), None)
+    ss.pop("bld_day", None)
+    ss["bld_newname"] = ""
+    for key in list(ss):
+        if key.startswith("bsel_"):
+            ss[key] = False
+    ss["_bld_msg"] = ("ok", "Draft changes cancelled. Saved workouts remain unchanged.")
+
+
+def builder_phase_changed():
+    ss.pop("bld_day", None)
+    ss["bld_cat"] = "All"
+    ss["bld_q"] = ""
+
+
+def builder_weekday_changed():
+    chosen = ss.get("bld_date") or now().date()
+    ss["bld_date"] = chosen - dt.timedelta(days=chosen.weekday()) + dt.timedelta(days=ss["bld_target_weekday"])
+
+
+def builder_date_changed():
+    ss["bld_target_weekday"] = ss["bld_date"].weekday()
 
 
 def builder_remove(day_id, ex_id):
@@ -2054,28 +2080,28 @@ def page_builder(clients):
     cur, _, _ = phase_for(client)
     if ss.get("bld_phase") not in pids:
         ss["bld_phase"] = (cur or phases[0])["id"]
-    pid = b.selectbox("Phase", pids, key="bld_phase", format_func=lambda i: next(p["name"] for p in phases if p["id"] == i))
+    pid = b.selectbox("Phase", pids, key="bld_phase", on_change=builder_phase_changed, format_func=lambda i: next(p["name"] for p in phases if p["id"] == i))
     phase = next(p for p in phases if p["id"] == pid)
     dopts = [d["id"] for d in phase["days"]] + ["__new__"]
     if ss.get("bld_day") not in dopts:
         ss["bld_day"] = dopts[0]
     dlabel = lambda i: builder_day_label(phase, i)
-    did = c3.selectbox("Day", dopts, key="bld_day", format_func=dlabel)
+    did = c3.selectbox("Saved workout", dopts, key="bld_day", format_func=dlabel)
     if did == "__new__":
         n1, n2 = st.columns([2, 1])
         n1.text_input("New day name", key="bld_newname", placeholder="Chest day")
         n2.selectbox("Day of week", [-1] + list(range(7)), key="bld_newwd", format_func=lambda x: "Any day" if x == -1 else WEEKDAYS[x])
         st.button("Cancel new day", on_click=builder_cancel_new_day)
-    st.caption("Choose General whenever needed. Apply Split program when the client is ready to return. Both plans stay saved; switching is manual.")
+    st.button("Cancel workout changes", on_click=builder_reset_draft)
+    st.caption("General replaces only the selected date. Your regular split workouts remain saved.")
     st.caption("Add and remove exercises in your draft, then press Apply to update the client page.")
-    st.date_input("Workout date / week", value=now().date(), key="bld_date")
-    if did != "__new__":
-        selected_day = next(d for d in phase["days"] if d["id"] == did)
-        chosen = ss["bld_date"]
-        wd = selected_day.get("weekday", -1)
-        apply_date = chosen if wd == -1 else chosen - dt.timedelta(days=chosen.weekday()) + dt.timedelta(days=wd)
-        st.caption(f"Apply saves this plan and assigns the selected workout on {apply_date:%A, %b %d, %Y}, replacing any removal or replacement on that date.")
-    st.button("Apply workout to client", type="primary", on_click=builder_apply)
+    ss.setdefault("bld_date", now().date())
+    ss["bld_target_weekday"] = ss["bld_date"].weekday()
+    w1, w2 = st.columns(2)
+    w1.selectbox("Day", list(range(7)), key="bld_target_weekday", format_func=lambda i: ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"][i], on_change=builder_weekday_changed)
+    w2.date_input("Workout date", key="bld_date", on_change=builder_date_changed)
+    st.caption(f"Apply assigns the selected workout on {ss['bld_date']:%A, %b %d, %Y}.")
+    st.button("Apply workout to client", type="primary", on_click=builder_apply, disabled=did == "__new__")
     with st.expander("Remove or replace a workout on a specific date", expanded=True):
         st.caption("Remove, Replace and Restore use the exact date selected above.")
         st.caption("Select General or Split program and a workout above. Replace assigns it only to this date; Remove leaves this date without a workout.")
@@ -2106,7 +2132,7 @@ def page_builder(clients):
                 y.button("✕", key=f"brm_{e['id']}", on_click=builder_remove, args=(day["id"], e["id"]))
 
     cats = [g for g in BUILDER_CATS if g == "All" or any(in_cat(l, g) for l in lib)]
-    cat = st.pills("Category", cats, default="All", key="bld_cat", format_func=lambda g: f"{glabel(g)} ({sum(1 for l in lib if in_cat(l, g))})") or "All"
+    cat = st.pills("Category", cats, default=None if "bld_cat" in ss else "All", key="bld_cat", format_func=lambda g: f"{glabel(g)} ({sum(1 for l in lib if in_cat(l, g))})") or "All"
     q = st.text_input("Search", key="bld_q", placeholder="Search exercises…")
     items = [l for l in lib if in_cat(l, cat) and (not q or q.lower() in l["name"].lower())]
     sel = [l["id"] for l in items if ss.get(f"bsel_{l['id']}")]
