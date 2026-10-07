@@ -270,6 +270,31 @@ def test_nutrition_log_without_plan_and_planned_meal_alternative(env):
     assert not at.exception
 
 
+def test_activity_log_updates_same_day_without_assigned_habits(env):
+    at = trainer_seeded(env)
+    rows = store(env)
+    client = clients_by_name(env)["Anton"]
+    client.update(onboarded=True, must_change_pin=False, habits=[])
+    rows[client["id"]] = client
+    (env / "store.json").write_text(json.dumps(rows))
+    at.session_state["trainer_ok"] = False
+    at.session_state["mode"] = "client"
+    at.session_state["client_id"] = client["id"]
+    at.session_state["nav"] = "🌿"
+    at.run()
+    date = at.date_input(key="activity_date").value.isoformat()
+    at.number_input(key=f"steps_{date}").set_value(7000)
+    at.number_input(key=f"burned_{date}").set_value(350)
+    next(b for b in at.button if b.label == "Save activity").click().run()
+    assert not at.exception
+    assert store(env)[client["id"]]["activity_log"] == [{"d": date, "steps": 7000, "burned_kcal": 350}]
+    at.number_input(key=f"steps_{date}").set_value(8000)
+    next(b for b in at.button if b.label == "Save activity").click().run()
+    assert len(store(env)[client["id"]]["activity_log"]) == 1
+    assert store(env)[client["id"]]["activity_log"][0]["steps"] == 8000
+    assert not at.exception
+
+
 def test_builder_adds_selected_exercises_to_a_new_day(env):
     at = trainer_seeded(env)
     venky = clients_by_name(env)["Venky"]["id"]
