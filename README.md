@@ -151,3 +151,7 @@ apply before closing the app. These changes are prepared for later deployment.
 ### Client activity and diet progress
 
 Habit includes daily manual entry of steps and calories burned from a tracker, with charts for the last 30 recorded days. Saving the same date updates its entry. Nutrition shows seven-day food logging, planned meal completion and substitutions. Trainer suggestions display assigned diet targets separately from optional client calorie entries.
+
+### Guided and bonus workouts
+
+Clients can start a workout on today's or a past selected day, mark each exercise done and move to the next, then complete the session. Bonus exercises appear below the main workout and have separate completion. In Workout builder, select **Add selected exercises as bonus workout**, add exercises and Apply. Main and bonus completions appear in the trainer's recent client activity.
