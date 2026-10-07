@@ -1848,11 +1848,13 @@ def builder_draft(cid):
         if not c:
             return None
         drafts[cid] = copy.deepcopy(c)
-        for p in drafts[cid]["program"]["phases"]:
-            if "general" in p["name"].lower():
-                p["name"] = "General"
-            elif "split" in p["name"].lower():
-                p["name"] = "Split program"
+    program = drafts[cid]["program"]
+    phases = program.setdefault("phases", [])
+    for p in phases:
+        p["name"] = "General" if "general" in p.get("name", "").lower() else "Split program"
+    for name in ("General", "Split program"):
+        if not any(p["name"] == name for p in phases):
+            phases.append(new_phase(name, 0, []))
     return drafts[cid]
 
 
