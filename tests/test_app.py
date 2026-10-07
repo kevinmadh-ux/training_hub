@@ -191,11 +191,12 @@ def test_client_first_login_pin_change_and_onboarding(env):
     pins = dict(at.session_state["_pins"])
     anton_id = clients_by_name(env)["Anton"]["id"]
     [b for b in at.sidebar.button if b.label == "Lock trainer session"][0].click().run()
-    at.selectbox[0].set_value(anton_id).run()
-    at.text_input[0].set_value("0000")
+    assert not at.selectbox
+    at.text_input(key="client_login_name").set_value("  aNtOn  ").run()
+    next(t for t in at.text_input if t.label == "PIN").set_value("0000")
     [b for b in at.button if b.label == "Log in"][0].click().run()
     assert any("not correct" in e.value for e in at.error)
-    at.text_input[0].set_value(pins["Anton"])
+    next(t for t in at.text_input if t.label == "PIN").set_value(pins["Anton"])
     [b for b in at.button if b.label == "Log in"][0].click().run()
     assert any(b.label == "Save PIN" for b in at.button)
     at.text_input[0].set_value("4821")
@@ -214,6 +215,20 @@ def test_client_first_login_pin_change_and_onboarding(env):
         at.session_state["nav"] = tab
         at.run()
         assert not at.exception, tab
+
+
+def test_client_login_hides_roster_and_rejects_unknown_name(env):
+    at = trainer_seeded(env)
+    next(b for b in at.sidebar.button if b.label == "Lock trainer session").click().run()
+    assert not at.selectbox
+    visible = " ".join(x.value for x in at.markdown)
+    assert "Anton" not in visible and "Dharan" not in visible
+    at.text_input(key="client_login_name").set_value("Unknown person").run()
+    next(t for t in at.text_input if t.label == "PIN").set_value("1234")
+    next(b for b in at.button if b.label == "Log in").click().run()
+    assert at.session_state["client_id"] is None
+    assert at.session_state["tries"] == 1
+    assert any(e.value == "That name or PIN is not correct." for e in at.error)
 
 
 def test_builder_adds_selected_exercises_to_a_new_day(env):
