@@ -1782,7 +1782,15 @@ def trainer_client_preview():
     if page == "Home":
         tab_home(c, lib_map)
     elif page == "Training":
-        date = st.date_input("Preview workout date", value=now().date()).isoformat()
+        chosen = st.date_input("Preview week", value=now().date(), key="preview_week")
+        monday = chosen - dt.timedelta(days=chosen.weekday())
+        dates = [monday + dt.timedelta(days=i) for i in range(7)]
+        st.caption(f"Week of {monday:%b %d, %Y}")
+        selected = st.segmented_control("Day", list(range(7)), key="preview_training_day", default=now().date().weekday(),
+                                        format_func=lambda i: f"{WEEKDAYS[i]} {dates[i].day}")
+        selected = now().date().weekday() if selected is None else selected
+        date = dates[selected].isoformat()
+        st.markdown(f"**{dates[selected]:%A, %B %d}**")
         for day in workouts_for_date(c, date):
             workout_card(c, day, lib_map, date, False)
         if not workouts_for_date(c, date):
