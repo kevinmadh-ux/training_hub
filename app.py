@@ -593,6 +593,7 @@ def builder_date_action(action):
         assigned["id"] = uid()
         for exercise in assigned["exercises"] + assigned.get("bonus_exercises", []):
             exercise["id"] = uid()
+        assigned["allow_swaps"] = phase.get("name") == "General"
         overrides[date] = [assigned]
         split = next((p for p in current["program"]["phases"] if "general" not in p.get("name", "").lower() and p["days"]), None)
         if split:
@@ -935,6 +936,56 @@ def complete_training_day(cid, date, day_id):
         save_client(c)
 
 
+def client_swap_exercise(cid, date, day_id, exercise_id, library_id):
+    if ss.get("client_id") != cid or ss.get("trainer_ok"):
+        return
+    c = B.get(cid)
+    day = next((d for d in workouts_for_date(c, date) if d["id"] == day_id), None) if c else None
+    if not day or not day.get("allow_swaps"):
+        return
+    old = next((e for e in day["exercises"] if e["id"] == exercise_id), None)
+    choice = next((e for e in get_lib() if e["id"] == library_id), None)
+    if not old or not choice or not in_cat(choice, old.get("group", "Other")) or is_done(c, date, "ex", exercise_id):
+        return
+    if any(e.get("lib_id") == library_id for e in day["exercises"] if e["id"] != exercise_id):
+        return
+    override = copy.deepcopy(workouts_for_date(c, date))
+    target = next(d for d in override if d["id"] == day_id)
+    replacement = ex_from_lib(choice, old.get("sets"), old.get("reps"))
+    replacement["group"] = old.get("group", choice["group"])
+    target["exercises"] = [replacement if e["id"] == exercise_id else e for e in target["exercises"]]
+    c["program"].setdefault("date_workouts", {})[date] = override
+    event_set(c, date, "workout", day_id, False, "")
+    save_client(c)
+    ss.pop("exercise_picker", None)
+
+
+def open_exercise_picker(date, day_id, exercise_id):
+    ss["exercise_picker"] = {"date": date, "day": day_id, "exercise": exercise_id}
+
+
+def client_exercise_library(c, lib_map):
+    pick = ss["exercise_picker"]
+    day = next((d for d in workouts_for_date(c, pick["date"]) if d["id"] == pick["day"]), None)
+    old = next((e for e in day["exercises"] if e["id"] == pick["exercise"]), None) if day and day.get("allow_swaps") else None
+    if not old:
+        ss.pop("exercise_picker", None)
+        st.rerun()
+    group = old.get("group", "Other")
+    st.subheader(f"Exercise library · {glabel(group)}")
+    st.caption(f"Choose a replacement for {old['name']} on {pick['date']}. Your assigned sets and reps stay the same.")
+    st.button("Back to workout", on_click=lambda: ss.pop("exercise_picker", None))
+    used = {e.get("lib_id") for e in day["exercises"]}
+    for choice in lib_map.values():
+        if not in_cat(choice, group):
+            continue
+        with st.container(border=True):
+            st.write(choice["name"])
+            render_media(choice, lib_map)
+            st.button("Use this exercise", key=f"swap_choice_{choice['id']}", disabled=choice["id"] in used,
+                      on_click=client_swap_exercise, args=(c["id"], pick["date"], day["id"], old["id"], choice["id"]))
+
+
 def workout_card(c, d, lib_map, sel_date, editable):
     exs = d["exercises"]
     if exs:
@@ -948,7 +999,9 @@ def workout_card(c, d, lib_map, sel_date, editable):
         st.caption("No exercises in this workout yet.")
     for i, e in enumerate(exs):
         done = is_done(c, sel_date, "ex", e["id"])
-        with st.expander(f"{i + 1}. {e['name']}{'  ✅' if done else ''}"):
+        with st.expander(f"{i + 1}. {glabel(e.get('group', 'Other'))} · {e['name']}{'  ✅' if done else ''}"):
+            if d.get("allow_swaps"):
+                st.button("Change exercise", key=f"swap_{sel_date}_{e['id']}", disabled=done, on_click=open_exercise_picker, args=(sel_date, d["id"], e["id"]))
             render_media(e, lib_map)
             st.markdown(chips_html(e), unsafe_allow_html=True)
             if e.get("notes"):
@@ -979,6 +1032,8 @@ def training_day_changed():
 
 
 def tab_training(c, lib_map):
+    if ss.get("exercise_picker"):
+        return client_exercise_library(c, lib_map)
     if ss.get("gw"):
         return guided_workout(c, lib_map)
     st.markdown('<div class="th-title">Training</div>', unsafe_allow_html=True)
@@ -2065,7 +2120,9 @@ def builder_apply():
         selected_date = ss.get("bld_date") or now().date()
         assigned_date = selected_date
         if phase["name"] == "General":
-            program["date_workouts"][assigned_date.isoformat()] = [copy.deepcopy(day)]
+            assigned = copy.deepcopy(day)
+            assigned["allow_swaps"] = True
+            program["date_workouts"][assigned_date.isoformat()] = [assigned]
         else:
             day["weekday"] = ss.get("bld_target_weekday", selected_date.weekday())
             program["date_workouts"].pop(assigned_date.isoformat(), None)
