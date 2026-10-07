@@ -950,7 +950,7 @@ def client_swap_exercise(cid, date, day_id, exercise_id, library_id):
     choice = next((e for e in get_lib() if e["id"] == library_id), None)
     if not old or not choice or not in_cat(choice, old.get("group", "Other")) or is_done(c, date, "ex", exercise_id):
         return
-    if any(e.get("lib_id") == library_id for e in day["exercises"] if e["id"] != exercise_id):
+    if any(e.get("lib_id") == library_id for assigned in workouts_for_date(c, date) for e in assigned["exercises"] + assigned.get("bonus_exercises", []) if e["id"] != exercise_id):
         return
     override = copy.deepcopy(workouts_for_date(c, date))
     target = next(d for d in override if d["id"] == day_id)
@@ -978,14 +978,17 @@ def client_exercise_library(c, lib_map):
     st.subheader(f"Exercise library · {glabel(group)}")
     st.caption(f"Choose a replacement for {old['name']} on {pick['date']}. Your assigned sets and reps stay the same.")
     st.button("Back to workout", on_click=lambda: ss.pop("exercise_picker", None))
-    used = {e.get("lib_id") for e in day["exercises"]}
+    used = {e.get("lib_id") for assigned in workouts_for_date(c, pick["date"]) for e in assigned["exercises"] + assigned.get("bonus_exercises", [])}
     for choice in lib_map.values():
         if not in_cat(choice, group):
             continue
         with st.container(border=True):
             st.write(choice["name"])
             render_media(choice, lib_map)
-            st.button("Use this exercise", key=f"swap_choice_{choice['id']}", disabled=choice["id"] in used,
+            already_assigned = choice["id"] in used
+            if already_assigned:
+                st.caption("Already in this workout list")
+            st.button("Already in workout list" if already_assigned else "Use this exercise", key=f"swap_choice_{choice['id']}", disabled=already_assigned,
                       on_click=client_swap_exercise, args=(c["id"], pick["date"], day["id"], old["id"], choice["id"]))
 
 
