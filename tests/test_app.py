@@ -424,6 +424,69 @@ def test_trainer_preview_skips_onboarding_without_changing_client(env):
     assert "trainer_preview" not in at.session_state
 
 
+def test_preview_removes_one_duplicate_workout_for_one_date(env):
+    import copy
+    at = trainer_seeded(env)
+    rows = store(env)
+    client = clients_by_name(env)["Dharan"]
+    split = client["program"]["phases"][1]
+    duplicate = copy.deepcopy(split["days"][0])
+    duplicate["id"] = "extra_chest"
+    for i, e in enumerate(duplicate["exercises"]):
+        e["id"] = f"extra_ex_{i}"
+    split["days"].append(duplicate)
+    client["program"]["active_phase"] = split["id"]
+    rows[client["id"]] = client
+    (env / "store.json").write_text(json.dumps(rows))
+    st.cache_data.clear()
+    at.radio(key="page").set_value("Manage clients").run()
+    at.selectbox(key="manage_pick").set_value(client["id"]).run()
+    at.button(key=f"preview_{client['id']}").click().run()
+    at.radio(key="preview_nav").set_value("Training").run()
+    at.segmented_control(key="preview_training_day").set_value(0).run()
+    import datetime as dt
+    chosen = at.date_input(key="preview_week").value
+    date = (chosen - dt.timedelta(days=chosen.weekday())).isoformat()
+    at.button(key=f"preview_remove_{date}_extra_chest").click().run()
+    saved = store(env)[client["id"]]["program"]
+    assert len(saved["date_workouts"][date]) == 1
+    assert saved["date_workouts"][date][0]["id"] == split["days"][0]["id"]
+    assert saved["phases"][1] == split
+    assert not at.exception
+
+
+def test_split_class_swap_is_category_filtered_and_date_only(env):
+    import datetime as dt
+    import copy
+    at = trainer_seeded(env)
+    rows = store(env)
+    client = clients_by_name(env)["Anton"]
+    split = client["program"]["phases"][1]
+    client["program"]["active_phase"] = split["id"]
+    client.update(onboarded=True, must_change_pin=False)
+    before = copy.deepcopy(client["program"]["phases"])
+    rows[client["id"]] = client
+    (env / "store.json").write_text(json.dumps(rows))
+    at.session_state["trainer_ok"] = False
+    at.session_state["mode"] = "client"
+    at.session_state["client_id"] = client["id"]
+    at.session_state["nav"] = "🏋️"
+    at.run()
+    at.segmented_control(key="train_day").set_value(0).run()
+    date = (dt.date.today() - dt.timedelta(days=dt.date.today().weekday())).isoformat()
+    old = split["days"][0]["exercises"][0]
+    button = at.button(key=f"swap_{date}_{old['id']}")
+    assert button.label == "Change class"
+    button.click().run()
+    used = {e.get("lib_id") for e in split["days"][0]["exercises"]}
+    choice = next(e for e in rows["lib"]["exercises"] if e["group"] == "Chest" and e["id"] not in used)
+    at.button(key=f"swap_choice_{choice['id']}").click().run()
+    saved = store(env)[client["id"]]["program"]
+    assert saved["phases"] == before
+    assert saved["date_workouts"][date][0]["exercises"][0]["lib_id"] == choice["id"]
+    assert not at.exception
+
+
 def test_builder_adds_selected_exercises_to_a_new_day(env):
     at = trainer_seeded(env)
     venky = clients_by_name(env)["Venky"]["id"]
