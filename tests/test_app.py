@@ -412,6 +412,12 @@ def test_trainer_preview_skips_onboarding_without_changing_client(env):
     for page in ("Training", "Habit", "Nutrition", "Profile"):
         at.radio(key="preview_nav").set_value(page).run()
         assert not at.exception
+        if page == "Training":
+            at.segmented_control(key="preview_training_day").set_value(0).run()
+            assert any("Chest" in x.value for x in at.markdown)
+            at.segmented_control(key="preview_training_day").set_value(1).run()
+            assert any("Triceps" in x.value for x in at.markdown)
+            assert not at.exception
     assert store(env) == before
     next(b for b in at.button if b.label == "Back to trainer").click().run()
     assert not at.exception
