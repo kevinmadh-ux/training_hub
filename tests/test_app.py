@@ -16,6 +16,40 @@ APP = str(ROOT / "app.py")
 sys.path.insert(0, str(ROOT))
 
 
+def test_date_override_replace_remove_restore_and_trainer_guard():
+    import ast
+    import copy
+    import datetime as dt
+    source = ast.parse(Path(APP).read_text())
+    names = {"phase_for", "workouts_for_date", "builder_date_action"}
+    module = ast.Module(body=[n for n in source.body if isinstance(n, ast.FunctionDef) and n.name in names], type_ignores=[])
+    general = {"id": "g", "title": "Full body", "weekday": -1, "exercises": [{"id": "ge"}]}
+    chest = {"id": "ch", "title": "Chest", "weekday": 0, "exercises": [{"id": "ce"}]}
+    client = {"id": "c_a", "name": "Anton", "program": {"start": "2026-10-01", "phases": [
+        {"id": "gp", "name": "General", "days": [general]},
+        {"id": "sp", "name": "Split program", "days": [chest]}]}}
+    draft = copy.deepcopy(client)
+    state = {"trainer_ok": True, "bld_client": "c_a", "bld_phase": "gp", "bld_day": "g", "bld_date": dt.date(2026, 10, 12)}
+    backend = type("Backend", (), {"get": lambda self, cid: client})()
+    ns = {"copy": copy, "dobj": dt.date.fromisoformat, "now": lambda: dt.datetime(2026, 10, 12),
+          "ss": state, "B": backend, "builder_draft": lambda cid: draft, "uid": lambda: "new",
+          "save_client": lambda c: None}
+    exec(compile(module, APP, "exec"), ns)
+    resolve, action = ns["workouts_for_date"], ns["builder_date_action"]
+    assert resolve(client, "2026-10-12") == [chest]
+    action("replace")
+    assert resolve(client, "2026-10-12")[0]["title"] == "Full body"
+    assert resolve(client, "2026-10-19") == [chest]
+    assert client["program"]["phases"][0]["days"][0] == general
+    action("remove")
+    assert resolve(client, "2026-10-12") == []
+    action("restore")
+    assert resolve(client, "2026-10-12") == [chest]
+    state["trainer_ok"] = False
+    action("remove")
+    assert resolve(client, "2026-10-12") == [chest]
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     monkeypatch.setenv("TH_DATA_DIR", str(tmp_path))
@@ -211,3 +245,4 @@ def test_general_switch_is_manual_and_keeps_split(env):
     next(b for b in at.button if b.label == "Apply workout to client").click().run()
     assert store(env)[cid]["program"]["active_phase"] == split["id"]
     assert not at.exception
+
