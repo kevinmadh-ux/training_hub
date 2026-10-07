@@ -871,7 +871,10 @@ def onboarding(c):
 # Client app: tabs
 # ----------------------------------------------------------------------------
 def go_nav(target):
-    ss["nav"] = target
+    if ss.get("trainer_preview"):
+        ss["preview_nav"] = NAV_NAMES[target]
+    else:
+        ss["nav"] = target
 
 
 def start_workout(day_id, date=None, bonus=False):
@@ -1000,7 +1003,7 @@ def workout_card(c, d, lib_map, sel_date, editable):
     for i, e in enumerate(exs):
         done = is_done(c, sel_date, "ex", e["id"])
         with st.expander(f"{i + 1}. {glabel(e.get('group', 'Other'))} · {e['name']}{'  ✅' if done else ''}"):
-            if d.get("allow_swaps"):
+            if d.get("allow_swaps") and not ss.get("trainer_preview"):
                 st.button("Change exercise", key=f"swap_{sel_date}_{e['id']}", disabled=done, on_click=open_exercise_picker, args=(sel_date, d["id"], e["id"]))
             render_media(e, lib_map)
             st.markdown(chips_html(e), unsafe_allow_html=True)
@@ -1756,6 +1759,66 @@ def diet_pdf_import(c, clients):
         st.rerun()
 
 
+
+def open_client_preview(cid):
+    if ss.get("trainer_ok"):
+        ss["trainer_preview"] = cid
+        ss["preview_nav"] = "Home"
+
+
+def trainer_client_preview():
+    if not ss.get("trainer_ok"):
+        return
+    c = B.get(ss.get("trainer_preview"))
+    if not c:
+        ss.pop("trainer_preview", None)
+        st.rerun()
+    st.info(f"Trainer preview · {c['name']} · Onboarding skipped for this view")
+    if st.button("Back to trainer"):
+        ss.pop("trainer_preview", None)
+        st.rerun()
+    page = st.radio("Client page", ["Home", "Training", "Habit", "Nutrition", "Profile"], horizontal=True, key="preview_nav")
+    lib_map = {l["id"]: l for l in get_lib()}
+    if page == "Home":
+        tab_home(c, lib_map)
+    elif page == "Training":
+        date = st.date_input("Preview workout date", value=now().date()).isoformat()
+        for day in workouts_for_date(c, date):
+            workout_card(c, day, lib_map, date, False)
+        if not workouts_for_date(c, date):
+            st.info("No workouts on this day.")
+    elif page == "Nutrition":
+        st.subheader("Nutrition")
+        mac = c["diet"]["macros"]
+        st.write(f"Daily targets: {mac['kcal']} kcal · Protein {mac['p']} g · Carbs {mac['c']} g · Fat {mac['f']} g")
+        for meal in c["diet"]["meals"]:
+            st.write(f"{fmt_time(meal['time'])} · {meal['text']}")
+        if not c["diet"]["meals"]:
+            st.info("No meal plan assigned yet.")
+        nutrition_progress(c)
+        for slot in MEAL_SLOTS:
+            with st.expander(slot, expanded=True):
+                logs = [x for x in c.get("food_log", []) if x["meal"] == slot]
+                for entry in logs[-10:]:
+                    st.write(f"{entry['d']} · {entry['name']}")
+                if not logs:
+                    st.caption("No food entries yet.")
+    elif page == "Habit":
+        st.subheader("Habit")
+        for habit in c["habits"]:
+            st.write(f"{habit['name']} · {habit.get('target', '')}")
+        if c.get("activity_log"):
+            st.dataframe(pd.DataFrame(c["activity_log"]).sort_values("d", ascending=False).rename(columns={"d": "Date", "steps": "Steps", "burned_kcal": "Calories burned"}), hide_index=True)
+        else:
+            st.info("No activity entries yet.")
+    else:
+        st.subheader(c["name"])
+        profile = c["profile"]
+        for label, field in (("Height (cm)", "height_cm"), ("Weight (kg)", "weight_kg"), ("Diet", "diet"), ("Goal", "goal"), ("Training style", "style")):
+            st.write(f"{label}: {profile.get(field) or 'Not provided'}")
+        st.caption("This preview does not complete the client's onboarding or change their PIN.")
+
+
 def page_manage(clients):
     pin_notice()
     hero("Client management", "Build every plan in one place.", "Programmes, copy tools, diet, habits, coach notes and check-ins for each client.")
@@ -1783,6 +1846,7 @@ def page_manage(clients):
         ss["manage_pick"] = ids[0]
     cid = st.selectbox("Client", ids, key="manage_pick", format_func=lambda i: next(c["name"] for c in clients if c["id"] == i))
     c = next(x for x in clients if x["id"] == cid)
+    st.button("View client page — skip onboarding", key=f"preview_{cid}", on_click=open_client_preview, args=(cid,))
     lib = get_lib(create=True)
     t_prof, t_prog, t_diet, t_notes, t_check = st.tabs(["Profile", "Programme", "Diet and habits", "Coach notes", "Check-ins and photos"])
 
@@ -2504,6 +2568,8 @@ def page_builder(clients):
 
 
 def trainer_app():
+    if ss.get("trainer_preview"):
+        return trainer_client_preview()
     try:
         clients = load_all(B.kind)
     except Exception as exc:
