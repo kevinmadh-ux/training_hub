@@ -131,3 +131,19 @@ streamlit run app.py
 ```
 
 Without Supabase settings it runs in local test mode and saves to a `data` folder. Add `.streamlit/secrets.toml` with `TRAINER_PASSWORD` to log in as trainer.
+
+### Workout drafts and Apply
+
+In Workout builder, add or remove exercises, then press **Apply workout to client**.
+Until you apply, the client keeps their current plan. Apply publishes the selected
+phase and the revised plan, including removals. Existing exercise completion
+history is retained. General and Split program are shown without week labels.
+Choose General and Apply whenever a client needs it between split workouts.
+General stays active until you choose Split program and Apply again. You decide
+the duration; there is no automatic timer. Both plans remain saved.
+
+In Exercise library, use **Select for General** across categories, review the
+selection basket, and press **Send selection to General draft**. This replaces
+the General draft's exercises with your selection. Open Workout builder to
+review the draft and Apply it. Drafts last for the current trainer session;
+apply before closing the app. These changes are prepared for later deployment.
