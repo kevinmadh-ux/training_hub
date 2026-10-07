@@ -64,7 +64,7 @@ def test_seed_creates_the_ten_clients_and_plans(env):
     by = clients_by_name(env)
     assert set(by) == {"Anton", "Dharan", "Rekha", "Divya", "Venky", "Sheethal", "Varshni", "Swetha", "Guhan", "Kevin"}
     anton = by["Anton"]["program"]["phases"]
-    assert [p["name"] for p in anton] == ["Week 1 · General", "Split programme"]
+    assert [p["name"] for p in anton] == ["General", "Split program"]
     assert len(anton[0]["days"][0]["exercises"]) == 6
     assert all(e["sets"] == "3" and e["reps"] == "15" for e in anton[0]["days"][0]["exercises"])
     assert [d["title"].split(" · ")[1] for d in anton[1]["days"]] == ["Chest", "Triceps", "Lat", "Biceps", "Shoulder & Legs"]
@@ -115,6 +115,7 @@ def test_builder_adds_selected_exercises_to_a_new_day(env):
     for l in chest[:3]:
         at.checkbox(key=f"bsel_{l['id']}").check().run()
     [b for b in at.button if b.label.startswith("Add selected")][0].click().run()
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
     days = clients_by_name(env)["Venky"]["program"]["phases"][0]["days"]
     assert [d["title"] for d in days] == ["Chest day"]
     assert [e["name"] for e in days[0]["exercises"]] == [l["name"] for l in chest[:3]]
@@ -154,3 +155,59 @@ def test_diet_text_parser():
     assert [(m["time"], m["text"].split(":")[0]) for m in r["meals"]] == [("08:00", "Breakfast"), ("13:00", "Lunch"), ("20:00", "Dinner")]
     only_times = parse_diet("7:00 AM Oats with banana\n1:00 PM Chicken curry with rice")
     assert [m["time"] for m in only_times["meals"]] == ["07:00", "13:00"] and only_times["macros"] == {}
+
+
+def test_builder_draft_apply_and_remove(env):
+    at = trainer_seeded(env)
+    at.sidebar.radio[0].set_value("Workout builder").run()
+    cid = at.session_state["bld_client"]
+    before = store(env)[cid]["program"]
+    add = next(b for b in at.button if b.label == "ADD")
+    add.click().run()
+    assert not at.exception
+    assert store(env)[cid]["program"] == before
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    assert not at.exception
+    applied = store(env)[cid]["program"]
+    assert applied["active_phase"] == at.session_state["bld_phase"]
+    count = sum(len(d["exercises"]) for p in applied["phases"] for d in p["days"])
+    next(b for b in at.button if b.label == "✕").click().run()
+    assert sum(len(d["exercises"]) for p in store(env)[cid]["program"]["phases"] for d in p["days"]) == count
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    assert not at.exception
+    assert sum(len(d["exercises"]) for p in store(env)[cid]["program"]["phases"] for d in p["days"]) == count - 1
+
+
+def test_general_library_basket(env):
+    at = trainer_seeded(env)
+    at.sidebar.radio(key="page").set_value("Exercise library").run()
+    next(b for b in at.button if b.label == "Select for General").click().run()
+    assert len(at.session_state["general_basket"]) == 1
+    next(b for b in at.button if b.label == "Select for General" and not b.disabled).click().run()
+    assert len(at.session_state["general_basket"]) == 2
+    next(b for b in at.button if b.label == "Send selection to General draft").click().run()
+    assert not at.exception
+    cid = at.session_state["bld_client"]
+    draft = at.session_state["builder_drafts"][cid]
+    general = next(p for p in draft["program"]["phases"] if p["name"] == "General")
+    assert len(general["days"][0]["exercises"]) == 2
+
+
+def test_general_switch_is_manual_and_keeps_split(env):
+    at = trainer_seeded(env)
+    cid = clients_by_name(env)["Dharan"]["id"]
+    at.sidebar.radio(key="page").set_value("Workout builder").run()
+    at.selectbox(key="bld_client").set_value(cid).run()
+    phases = store(env)[cid]["program"]["phases"]
+    general, split = phases
+    at.selectbox(key="bld_phase").set_value(general["id"]).run()
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    program = store(env)[cid]["program"]
+    assert program["active_phase"] == general["id"]
+    assert "general_until" not in program
+    assert program["phases"][1] == split
+    assert not any("how many days" in x.label for x in at.selectbox)
+    at.selectbox(key="bld_phase").set_value(split["id"]).run()
+    next(b for b in at.button if b.label == "Apply workout to client").click().run()
+    assert store(env)[cid]["program"]["active_phase"] == split["id"]
+    assert not at.exception
