@@ -231,6 +231,45 @@ def test_client_login_hides_roster_and_rejects_unknown_name(env):
     assert any(e.value == "That name or PIN is not correct." for e in at.error)
 
 
+def test_nutrition_log_without_plan_and_planned_meal_alternative(env):
+    at = trainer_seeded(env)
+    rows = store(env)
+    client = clients_by_name(env)["Anton"]
+    client.update(onboarded=True, must_change_pin=False)
+    client["diet"]["meals"] = []
+    rows[client["id"]] = client
+    (env / "store.json").write_text(json.dumps(rows))
+    at.session_state["trainer_ok"] = False
+    at.session_state["client_id"] = client["id"]
+    at.session_state["mode"] = "client"
+    at.session_state["nav"] = "🍎"
+    at.run()
+    assert not at.exception
+    date = at.date_input(key="nut_date").value.isoformat()
+    at.text_input(key=f"fn_Breakfast_{date}").set_value("Idli and sambar")
+    at.button(key=f"FormSubmitter:food_Breakfast_{date}-Add food").click().run()
+    saved = store(env)[client["id"]]
+    assert saved["food_log"][0]["name"] == "Idli and sambar"
+    assert saved["food_log"][0]["meal"] == "Breakfast"
+    rows = store(env)
+    rows[client["id"]]["diet"]["meals"] = [{"id": "test_meal", "time": "08:00", "text": "Oats and milk"}]
+    (env / "store.json").write_text(json.dumps(rows))
+    at.run()
+    at.segmented_control(key="nut_mode").set_value("Plan").run()
+    at.radio(key=f"meal_status_test_meal_{date}").set_value("Ate something else")
+    at.text_area(key=f"meal_actual_test_meal_{date}").set_value("Eggs and toast")
+    at.button(key=f"FormSubmitter:meal_response_test_meal_{date}-Save meal status").click().run()
+    saved = store(env)[client["id"]]
+    assert any(x.get("plan_ref") == "test_meal" and x["name"] == "Eggs and toast" for x in saved["food_log"])
+    assert not any(e["k"] == "meal" and e["ref"] == "test_meal" for e in saved["events"])
+    at.radio(key=f"meal_status_test_meal_{date}").set_value("Ate the planned meal")
+    at.button(key=f"FormSubmitter:meal_response_test_meal_{date}-Save meal status").click().run()
+    saved = store(env)[client["id"]]
+    assert any(e["k"] == "meal" and e["ref"] == "test_meal" for e in saved["events"])
+    assert not any(x.get("plan_ref") == "test_meal" for x in saved["food_log"])
+    assert not at.exception
+
+
 def test_builder_adds_selected_exercises_to_a_new_day(env):
     at = trainer_seeded(env)
     venky = clients_by_name(env)["Venky"]["id"]
