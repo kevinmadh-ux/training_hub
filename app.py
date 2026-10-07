@@ -591,7 +591,7 @@ def builder_date_action(action):
             return
         assigned = copy.deepcopy(day)
         assigned["id"] = uid()
-        for exercise in assigned["exercises"]:
+        for exercise in assigned["exercises"] + assigned.get("bonus_exercises", []):
             exercise["id"] = uid()
         overrides[date] = [assigned]
         split = next((p for p in current["program"]["phases"] if "general" not in p.get("name", "").lower() and p["days"]), None)
@@ -769,7 +769,7 @@ def is_done(c, d, kind, ref):
 
 def day_done(c, d, day):
     ids = {e["id"] for e in day["exercises"]}
-    return any(e["d"] == d and e["k"] == "ex" and e["ref"] in ids for e in c["events"])
+    return bool(ids) and all(is_done(c, d, "ex", eid) for eid in ids)
 
 
 def streak(c):
@@ -873,8 +873,8 @@ def go_nav(target):
     ss["nav"] = target
 
 
-def start_workout(day_id):
-    ss["gw"] = {"day": day_id, "i": 0, "sets": {}, "w": {}}
+def start_workout(day_id, date=None, bonus=False):
+    ss["gw"] = {"day": day_id, "date": date or today(), "bonus": bonus, "i": 0, "sets": {}, "w": {}}
 
 
 def tab_home(c, lib_map):
@@ -918,8 +918,27 @@ def tab_home(c, lib_map):
             st.caption(n["d"])
 
 
+def toggle_training_exercise(cid, date, day_id, ref, label, key):
+    c = B.get(cid)
+    if c:
+        event_set(c, date, "ex", ref, ss[key], label)
+        if not ss[key]:
+            event_set(c, date, "workout", day_id, False, "")
+        save_client(c)
+
+
+def complete_training_day(cid, date, day_id):
+    c = B.get(cid)
+    day = next((d for d in workouts_for_date(c, date) if d["id"] == day_id), None) if c else None
+    if day and day["exercises"] and all(is_done(c, date, "ex", e["id"]) for e in day["exercises"]):
+        event_set(c, date, "workout", day_id, True, day["title"])
+        save_client(c)
+
+
 def workout_card(c, d, lib_map, sel_date, editable):
     exs = d["exercises"]
+    if exs:
+        st.button("Start workout", key=f"sw_{d['id']}", type="primary", width="stretch", on_click=start_workout, args=(d["id"], sel_date), disabled=not editable)
     st.markdown(f'<div class="th-banner"><h2>{esc(d["title"])}</h2><span class="th-tag">{len(exs)} EXERCISES</span></div>', unsafe_allow_html=True)
     start = (now() + dt.timedelta(days=1)).replace(hour=7, minute=0, second=0, microsecond=0, tzinfo=None)
     desc = "\n".join(f"{e['name']} {e['sets']}x{e['reps']}" for e in exs) or "Workout"
@@ -937,9 +956,26 @@ def workout_card(c, d, lib_map, sel_date, editable):
                 st.caption(e["notes"])
             if editable:
                 key = f"ex_{sel_date}_{e['id']}"
-                st.checkbox("Done today", value=done, key=key, on_change=toggle_event, args=(c["id"], "ex", e["id"], e["name"], key))
-    if editable and exs:
-        st.button("Start workout", key=f"sw_{d['id']}", type="primary", width="stretch", on_click=start_workout, args=(d["id"],))
+                st.checkbox("Exercise done", value=done, key=key, on_change=toggle_training_exercise, args=(c["id"], sel_date, d["id"], e["id"], e["name"], key))
+    st.markdown("**Bonus workout**")
+    bonus = d.get("bonus_exercises", [])
+    for exercise in bonus:
+        st.write(f"{exercise['name']} · {exercise['sets']}×{exercise['reps']}")
+    if bonus:
+        st.button("Start bonus workout", key=f"bonus_start_{d['id']}", on_click=start_workout, args=(d["id"], sel_date, True), disabled=not editable)
+    else:
+        st.caption("Your trainer has not added bonus exercises for this day.")
+    if is_done(c, sel_date, "workout", d["id"]):
+        st.success("Workout completed for the day.")
+    elif exs and editable:
+        st.button("Complete workout", key=f"complete_{d['id']}_{sel_date}", on_click=complete_training_day,
+                  args=(c["id"], sel_date, d["id"]), disabled=not all(is_done(c, sel_date, "ex", e["id"]) for e in exs))
+    if is_done(c, sel_date, "bonus_workout", d["id"]):
+        st.success("Bonus workout completed.")
+
+
+def training_day_changed():
+    ss["train_selected"] = ss.get("train_day")
 
 
 def tab_training(c, lib_map):
@@ -959,10 +995,10 @@ def tab_training(c, lib_map):
         done = any(day_done(c, dates[i].isoformat(), dy) for dy in workouts_for_date(c, dates[i]))
         return f"{WEEKDAYS[i]} {dates[i].day}{' ✓' if done else ''}"
 
-    sel = st.segmented_control("Day", list(range(7)), format_func=lab, default=td.weekday(), key="train_day", label_visibility="collapsed")
+    sel = st.segmented_control("Day", list(range(7)), format_func=lab, default=ss.get("train_selected", td.weekday()), key="train_day", on_change=training_day_changed, label_visibility="collapsed")
     sel = td.weekday() if sel is None else sel
     sel_date = dates[sel].isoformat()
-    editable = sel_date == td.isoformat()
+    editable = sel_date <= td.isoformat()
     todays = workouts_for_date(c, sel_date)
     if not todays:
         st.markdown('<div class="th-card th-empty">NO WORKOUTS ON THIS DAY</div>', unsafe_allow_html=True)
@@ -970,7 +1006,7 @@ def tab_training(c, lib_map):
         workout_card(c, d, lib_map, sel_date, editable)
 
     week_ex = [e for date in dates for d in workouts_for_date(c, date) for e in d["exercises"]]
-    done_week = sum(1 for e in c["events"] if e["k"] == "ex" and e["d"] >= monday.isoformat() and e["d"] <= dates[6].isoformat())
+    done_week = sum(1 for e in c["events"] if e["k"] == "ex" and not e.get("bonus") and e["d"] >= monday.isoformat() and e["d"] <= dates[6].isoformat())
     with st.container(border=True):
         h1, h2 = st.columns([2, 1])
         h1.markdown("**Training progress**")
@@ -984,11 +1020,14 @@ def tab_training(c, lib_map):
 def guided_workout(c, lib_map):
     gw = ss["gw"]
     phase, _, _ = phase_for(c)
-    day = next((d for d in workouts_for_date(c, today()) if d["id"] == gw["day"]), None)
-    if not day or not day["exercises"]:
+    date = gw.get("date", today())
+    bonus = gw.get("bonus", False)
+    day = next((d for d in workouts_for_date(c, date) if d["id"] == gw["day"]), None)
+    exercises = day.get("bonus_exercises" if bonus else "exercises", []) if day else []
+    if not exercises:
         ss["gw"] = None
         st.rerun()
-    exs, i = day["exercises"], min(gw["i"], len(day["exercises"]) - 1)
+    exs, i = exercises, min(gw["i"], len(exercises) - 1)
     e = exs[i]
     st.markdown(f'<div class="th-title">{esc(day["title"])}</div>', unsafe_allow_html=True)
     st.progress((i) / len(exs), text=f"Exercise {i + 1} of {len(exs)}")
@@ -1016,25 +1055,30 @@ def guided_workout(c, lib_map):
     def move(delta):
         ss["gw"]["i"] = max(0, min(len(exs) - 1, ss["gw"]["i"] + delta))
 
+    def mark_done():
+        cc = B.get(c["id"])
+        event_set(cc, date, "ex", e["id"], True, ("Bonus: " if bonus else "") + e["name"], bonus=bonus,
+                  sets=len(ss["gw"]["sets"].get(e["id"], [])) or n_sets(e), w=ss["gw"]["w"].get(e["id"], ""))
+        save_client(cc)
+        move(1)
+
     def finish():
         cc = B.get(c["id"])
-        n = 0
-        for ex_ in exs:
-            sets_done = len(ss["gw"]["sets"].get(ex_["id"], []))
-            if sets_done:
-                event_set(cc, today(), "ex", ex_["id"], True, ex_["name"], sets=sets_done, w=ss["gw"]["w"].get(ex_["id"], ""))
-                n += 1
+        if not all(is_done(cc, date, "ex", exercise["id"]) for exercise in exs):
+            return
+        event_set(cc, date, "bonus_workout" if bonus else "workout", day["id"], True, day["title"])
         save_client(cc)
         ss["gw"] = None
-        ss["_toast"] = f"Workout saved. {n} exercises logged."
+        ss["_toast"] = "Bonus workout completed." if bonus else "Workout completed for the day."
 
     a, b, d_ = st.columns(3)
     a.button("Back", on_click=move, args=(-1,), disabled=i == 0, width="stretch")
-    if i < len(exs) - 1:
-        b.button("Next", on_click=move, args=(1,), type="primary", width="stretch")
-    else:
-        b.button("Finish", on_click=finish, type="primary", width="stretch")
+    b.button("Mark exercise done and next" if i < len(exs) - 1 else "Mark exercise done", on_click=mark_done, type="primary", width="stretch")
     d_.button("Exit", on_click=lambda: ss.__setitem__("gw", None), width="stretch")
+    if all(is_done(c, date, "ex", exercise["id"]) for exercise in exs):
+        st.button("Complete bonus workout" if bonus else "Complete workout", on_click=finish, type="primary", width="stretch")
+    else:
+        st.caption("Mark each exercise done to complete the workout.")
 
 
 
@@ -1425,7 +1469,7 @@ def page_overview(clients, sel_ids, start, end):
                             tooltip=["client", "date:T", "energy", "sleep", "soreness"]).properties(height=240), width="stretch")
 
     st.header("Recent client activity")
-    rows = [(r_.date, r_.client, {"ex": "Exercise done", "meal": "Meal on plan", "habit": "Habit"}.get(r_.type, r_.type), r_["item"]) for _, r_ in cur_ev.iterrows()]
+    rows = [(r_.date, r_.client, {"ex": "Exercise done", "workout": "Workout completed", "bonus_workout": "Bonus workout completed", "meal": "Meal on plan", "habit": "Habit"}.get(r_.type, r_.type), r_["item"]) for _, r_ in cur_ev.iterrows()]
     rows += [(r_.date, r_.client, "Weigh-in", f"{r_.weight} kg") for _, r_ in in_range(wt, start, end).iterrows()]
     rows += [(r_.date, r_.client, "Check-in", f"Energy {r_.energy} · Sleep {r_.sleep}") for _, r_ in cur_ci.iterrows()]
     act = pd.DataFrame(rows, columns=["Date", "Client", "Activity", "Detail"]).sort_values("Date", ascending=False).head(15)
@@ -2039,7 +2083,7 @@ def builder_apply():
                 target["program"]["phases"].append(target_phase)
             copied_day = copy.deepcopy(day)
             copied_day["id"] = uid()
-            for exercise in copied_day["exercises"]:
+            for exercise in copied_day["exercises"] + copied_day.get("bonus_exercises", []):
                 exercise["id"] = uid()
             match = next((n for n, d in enumerate(target_phase["days"]) if
                 d["title"].strip().lower() == day["title"].strip().lower()), None)
@@ -2082,7 +2126,8 @@ def builder_add(lib_ids):
         if day is None:
             ss["_bld_msg"] = ("error", "Pick a day first.")
             return
-    added, skipped = add_to_day(day, lib_ids, libmap, sets, reps)
+    target_day = {"exercises": day.setdefault("bonus_exercises", [])} if ss.get("bld_bonus") else day
+    added, skipped = add_to_day(target_day, lib_ids, libmap, sets, reps)
     names = [c["name"]]
     for i in lib_ids:
         ss[f"bsel_{i}"] = False
@@ -2217,6 +2262,7 @@ def builder_remove(day_id, ex_id):
         for d in p["days"]:
             if d["id"] == day_id:
                 d["exercises"] = [e for e in d["exercises"] if e["id"] != ex_id]
+                d["bonus_exercises"] = [e for e in d.get("bonus_exercises", []) if e["id"] != ex_id]
 
 
 def lib_set_link(lid, key):
@@ -2310,8 +2356,13 @@ def page_builder(clients):
     o1.caption("Apply also copies the selected day to these clients in the same phase. A day with the same name is replaced; their other days and active phase stay as they are.")
     o2.text_input("Sets for added exercises", key="bld_sets", placeholder="library default")
     o3.text_input("Reps for added exercises", key="bld_reps", placeholder="library default")
+    st.checkbox("Add selected exercises as bonus workout", key="bld_bonus")
     if did != "__new__":
         day = next(d for d in phase["days"] if d["id"] == did)
+        for e in day.get("bonus_exercises", []):
+            bx, by = st.columns([6, 1])
+            bx.write(f"Bonus: {e['name']} · {e['sets']}×{e['reps']}")
+            by.button("✕", key=f"bonus_remove_{e['id']}", on_click=builder_remove, args=(day["id"], e["id"]))
         with st.expander(f"In this day now ({len(day['exercises'])})", expanded=bool(day["exercises"])):
             if not day["exercises"]:
                 st.caption("Nothing here yet.")
@@ -2398,3 +2449,4 @@ elif ss["mode"] == "trainer":
     trainer_login()
 else:
     client_flow()
+
