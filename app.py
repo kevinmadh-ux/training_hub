@@ -24,6 +24,7 @@ import altair as alt
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v2 as components_v2
 
 from dietpdf import extract_text, parse_diet
 
@@ -793,6 +794,83 @@ def client_color(clients, c):
 # ----------------------------------------------------------------------------
 # Client app: onboarding
 # ----------------------------------------------------------------------------
+device_session = components_v2.component(
+    "client_device_session", html='<span></span>',
+    js="""
+export default function({data, parentElement, setStateValue}) {
+ const key='training_hub_client_session';
+ try {
+  if(data.command && parentElement.dataset.command!==data.command.id){
+   if(data.command.token) localStorage.setItem(key,data.command.token);
+   else localStorage.removeItem(key);
+   parentElement.dataset.command=data.command.id;
+  }
+  const token=localStorage.getItem(key)||'';
+  if(parentElement.dataset.token!==token){
+   parentElement.dataset.token=token;setStateValue('token',token);
+  }
+ } catch(e) { if(parentElement.dataset.token!== ''){
+  parentElement.dataset.token='';setStateValue('token','');
+ } }
+}
+""",
+)
+
+
+def session_row_id(token):
+    return "auth_" + hashlib.sha256(token.encode()).hexdigest()
+
+
+def remember_client(c):
+    token = secrets.token_urlsafe(32)
+    B.put({"id": session_row_id(token), "client": c["id"],
+           "pin_hash": c["pin_hash"], "expires": (now() + dt.timedelta(days=30)).isoformat()})
+    ss["device_token"] = token
+    ss["device_command"] = {"id": uid(), "token": token}
+
+
+def remembered_client(token):
+    if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+        return None
+    row = B.get(session_row_id(token))
+    if not row:
+        return None
+    try:
+        if dt.datetime.fromisoformat(row["expires"]) <= now():
+            return None
+    except (KeyError, ValueError, TypeError):
+        return None
+    c = B.get(row.get("client", ""))
+    if not c or not hmac.compare_digest(row.get("pin_hash", ""), c.get("pin_hash", "")):
+        return None
+    return c
+
+
+def forget_client():
+    token = ss.pop("device_token", None)
+    if token:
+        B.delete(session_row_id(token))
+    ss["device_command"] = {"id": uid(), "token": ""}
+    ss["client_id"] = None
+    ss.pop("gw", None)
+    ss.pop("nav", None)
+
+
+def restore_device_session():
+    result = device_session(data={"command": ss.get("device_command")},
+        key="client_device", default={"token": None}, on_token_change=lambda: None, height=0)
+    token = result.token
+    if not ss.get("client_id") and token and not ss.get("device_command"):
+        c = remembered_client(token)
+        if c:
+            ss["client_id"], ss["device_token"] = c["id"], token
+            ss["remember_login"] = True
+            st.rerun()
+        else:
+            ss["device_command"] = {"id": uid(), "token": ""}
+            st.rerun()
+
+
 def client_login():
     st.markdown('<div class="th-head"><div class="t">Training Hub</div><div class="d">Welcome</div><div class="g">Log in to your plan</div></div>', unsafe_allow_html=True)
     try:
@@ -806,6 +884,8 @@ def client_login():
         with st.container(border=True):
             name = st.text_input("Your name", key="client_login_name", placeholder="Type the name your trainer registered")
             pin = st.text_input("PIN", type="password", max_chars=4, placeholder="4-digit PIN")
+            remember = st.checkbox("Keep me signed in on this device", value=True, key="remember_login")
+            st.caption("Use this only on your own phone or computer. Sign-in lasts up to 30 days.")
             if ss.get("tries", 0) >= 5:
                 st.error("Too many wrong PINs. Ask your trainer to reset it.")
             elif st.button("Log in", type="primary", width="stretch", disabled=not name.strip()):
@@ -818,6 +898,8 @@ def client_login():
                         matches.append(c)
                 if len(matches) == 1:
                     ss["client_id"], ss["tries"] = matches[0]["id"], 0
+                    if remember:
+                        remember_client(matches[0])
                     st.rerun()
                 else:
                     ss["tries"] = ss.get("tries", 0) + 1
@@ -844,6 +926,8 @@ def onboarding(c):
                 else:
                     set_pin(c, p1, False)
                     save_client(c)
+                    if ss.get("remember_login"):
+                        remember_client(c)
                     st.rerun()
         return
     st.markdown(f'<div class="th-head"><div class="t">Welcome, {esc(first)}</div><div class="d">Step 2 of 2</div><div class="g">Tell us about you</div></div>', unsafe_allow_html=True)
@@ -1374,12 +1458,13 @@ def tab_profile(c):
             st.altair_chart(alt.Chart(df).mark_line(point=True, color="#4A94F2", strokeWidth=2.4).encode(
                 x=alt.X("date:T", title=None), y=alt.Y("weight:Q", scale=alt.Scale(zero=False), title=None), tooltip=["date:T", "weight"]).properties(height=200), width="stretch")
     if st.button("Log out", width="stretch"):
-        ss["client_id"] = None
+        forget_client()
         ss["gw"] = None
         st.rerun()
 
 
 def client_flow():
+    restore_device_session()
     if not ss.get("client_id"):
         return client_login()
     c = B.get(ss["client_id"])
@@ -2652,4 +2737,5 @@ elif ss["mode"] == "trainer":
     trainer_login()
 else:
     client_flow()
+
 
