@@ -563,11 +563,45 @@ def phase_for(c, on=None):
 def workouts_for_date(c, on):
     """Date assignments replace the regular schedule; an empty list is a rest day."""
     on = dobj(on) if isinstance(on, str) else on
+    choice = c["program"].get("client_workout_choices", {}).get(on.isoformat())
+    if choice:
+        return choice["workouts"]
     overrides = c["program"].get("date_workouts", {})
     if on.isoformat() in overrides:
         return overrides[on.isoformat()]
     phase, _, _ = phase_for(c, on)
     return [d for d in (phase["days"] if phase else []) if d["weekday"] in (on.weekday(), -1)]
+
+
+def client_workout_options(c, date, kind):
+    phases = c["program"].get("phases", [])
+    general = kind == "General"
+    assigned = c["program"].get("date_workouts", {}).get(date, [])
+    matching = [d for d in assigned if bool(d.get("allow_swaps")) == general]
+    if matching:
+        return matching
+    days = [d for p in phases if ("general" in p.get("name", "").lower()) == general for d in p["days"]]
+    if general:
+        return [next((d for d in days if d["exercises"]), days[0])] if days else []
+    return [d for d in days if d["weekday"] in (dobj(date).weekday(), -1)]
+
+
+def client_choose_workout(cid, date, key):
+    if ss.get("client_id") != cid or ss.get("trainer_ok"):
+        return
+    c = B.get(cid)
+    if not c:
+        return
+    kind = ss.get(key)
+    if kind not in ("General", "Split workout"):
+        return
+    workouts = copy.deepcopy(client_workout_options(c, date, kind))
+    for workout in workouts:
+        workout["allow_swaps"] = kind == "General"
+    c["program"].setdefault("client_workout_choices", {})[date] = {"kind": kind, "workouts": workouts}
+    save_client(c)
+    ss["gw"] = None
+    ss.pop("exercise_picker", None)
 
 
 def builder_date_action(action):
@@ -578,6 +612,7 @@ def builder_date_action(action):
     if not current:
         return
     date = ss["bld_date"].isoformat()
+    current["program"].get("client_workout_choices", {}).pop(date, None)
     overrides = current["program"].setdefault("date_workouts", {})
     if action == "restore":
         overrides.pop(date, None)
@@ -596,6 +631,7 @@ def builder_date_action(action):
             exercise["id"] = uid()
         assigned["allow_swaps"] = phase.get("name") == "General"
         overrides[date] = [assigned]
+        current["program"].get("client_workout_choices", {}).pop(date, None)
         split = next((p for p in current["program"]["phases"] if "general" not in p.get("name", "").lower() and p["days"]), None)
         if split:
             current["program"]["active_phase"] = split["id"]
@@ -1041,7 +1077,11 @@ def client_swap_exercise(cid, date, day_id, exercise_id, library_id):
     replacement = ex_from_lib(choice, old.get("sets"), old.get("reps"))
     replacement["group"] = old.get("group", choice["group"])
     target["exercises"] = [replacement if e["id"] == exercise_id else e for e in target["exercises"]]
-    c["program"].setdefault("date_workouts", {})[date] = override
+    choice = c["program"].get("client_workout_choices", {}).get(date)
+    if choice:
+        choice["workouts"] = override
+    else:
+        c["program"].setdefault("date_workouts", {})[date] = override
     event_set(c, date, "workout", day_id, False, "")
     save_client(c)
     ss.pop("exercise_picker", None)
@@ -1144,6 +1184,16 @@ def tab_training(c, lib_map):
     sel = td.weekday() if sel is None else sel
     sel_date = dates[sel].isoformat()
     editable = sel_date <= td.isoformat()
+    choice = c["program"].get("client_workout_choices", {}).get(sel_date)
+    assigned = workouts_for_date(c, sel_date)
+    default_kind = choice["kind"] if choice else ("General" if assigned and all(d.get("allow_swaps") or "general" in d.get("title", "").lower() for d in assigned) else "Split workout")
+    choice_key = f"workout_type_{c['id']}_{sel_date}"
+    st.radio("Choose your workout", ["Split workout", "General"],
+        index=0 if default_kind == "Split workout" else 1, horizontal=True,
+        key=choice_key, on_change=client_choose_workout, args=(c["id"], sel_date, choice_key))
+    if ss.get(choice_key) == "General" and not client_workout_options(c, sel_date, "General"):
+        st.info("Your trainer has not saved a General workout yet.")
+    st.caption("Your choice applies to this day. Your weekly split schedule stays saved.")
     todays = workouts_for_date(c, sel_date)
     if not todays:
         st.markdown('<div class="th-card th-empty">NO WORKOUTS ON THIS DAY</div>', unsafe_allow_html=True)
@@ -2330,11 +2380,13 @@ def builder_apply():
     program.pop("general_until", None)
     program.pop("resume_phase", None)
     program["date_workouts"] = copy.deepcopy(current["program"].get("date_workouts", {}))
+    program["client_workout_choices"] = copy.deepcopy(current["program"].get("client_workout_choices", {}))
     day = next((d for d in phase["days"] if d["id"] == ss.get("bld_day")), None)
     assigned_date = None
     if day:
         selected_date = ss.get("bld_date") or now().date()
         assigned_date = selected_date
+        program["client_workout_choices"].pop(assigned_date.isoformat(), None)
         if phase["name"] == "General":
             assigned = copy.deepcopy(day)
             assigned["allow_swaps"] = True
