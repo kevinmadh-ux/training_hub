@@ -159,3 +159,7 @@ Clients can start a workout on today's or a past selected day, mark each exercis
 ### Returning to the app
 
 Clients can check **Keep me signed in on this device** when logging in on their own phone or computer. The app remembers that device for up to 30 days across page refreshes and reopening. **Profile → Log out** removes that device's access. Resetting or changing the client PIN invalidates existing remembered logins. Private browsing or clearing browser storage requires signing in again. Persistent data storage through Supabase is needed to keep sessions across server restarts; local test storage can reset on Streamlit Cloud.
+
+### Client workout choice
+
+On Training, clients select a day and choose **Split workout** or **General** before starting. General uses their trainer's saved General workout. The selection applies only to that date; the saved weekly split remains unchanged. Clients can switch back to Split workout for that date. If no General workout has been saved, the app explains that one is needed. Exercise changes apply only to the chosen date.
