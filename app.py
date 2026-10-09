@@ -546,7 +546,7 @@ def phase_for(c, on=None):
         chosen = next((p for p in phases if p["id"] == active), None)
         if chosen:
             return chosen, 1, max(1, (on - dobj(c["program"]["start"])).days // 7 + 1)
-    split = next((p for p in phases if "general" not in p.get("name", "").lower() and p.get("days")), None)
+    split = next((p for p in phases if workout_kind(p) == "Split workout" and p.get("days")), None)
     if split:
         return split, 1, max(1, (on - dobj(c["program"]["start"])).days // 7 + 1)
     week = max(0, (on - dobj(c["program"]["start"])).days // 7)
@@ -573,14 +573,23 @@ def workouts_for_date(c, on):
     return [d for d in (phase["days"] if phase else []) if d["weekday"] in (on.weekday(), -1)]
 
 
+def workout_kind(phase):
+    name = phase.get("name", "").lower()
+    if "general" in name:
+        return "General"
+    if "combined" in name:
+        return "Combined split workout"
+    return "Split workout"
+
+
 def client_workout_options(c, date, kind):
     phases = c["program"].get("phases", [])
     general = kind == "General"
     assigned = c["program"].get("date_workouts", {}).get(date, [])
-    matching = [d for d in assigned if bool(d.get("allow_swaps")) == general]
+    matching = [d for d in assigned if d.get("workout_kind", "General" if d.get("allow_swaps") else "Split workout") == kind]
     if matching:
         return matching
-    days = [d for p in phases if ("general" in p.get("name", "").lower()) == general for d in p["days"]]
+    days = [d for p in phases if workout_kind(p) == kind for d in p["days"]]
     if general:
         return [next((d for d in days if d["exercises"]), days[0])] if days else []
     return [d for d in days if d["weekday"] in (dobj(date).weekday(), -1)]
@@ -593,7 +602,7 @@ def client_choose_workout(cid, date, key):
     if not c:
         return
     kind = ss.get(key)
-    if kind not in ("General", "Split workout"):
+    if kind not in ("General", "Split workout", "Combined split workout"):
         return
     workouts = copy.deepcopy(client_workout_options(c, date, kind))
     for workout in workouts:
@@ -629,10 +638,11 @@ def builder_date_action(action):
         assigned["id"] = uid()
         for exercise in assigned["exercises"] + assigned.get("bonus_exercises", []):
             exercise["id"] = uid()
-        assigned["allow_swaps"] = phase.get("name") == "General"
+        assigned["allow_swaps"] = workout_kind(phase) == "General"
+        assigned["workout_kind"] = workout_kind(phase)
         overrides[date] = [assigned]
         current["program"].get("client_workout_choices", {}).pop(date, None)
-        split = next((p for p in current["program"]["phases"] if "general" not in p.get("name", "").lower() and p["days"]), None)
+        split = next((p for p in current["program"]["phases"] if workout_kind(p) == "Split workout" and p["days"]), None)
         if split:
             current["program"]["active_phase"] = split["id"]
     save_client(current)
@@ -1117,6 +1127,8 @@ def client_exercise_library(c, lib_map):
 
 
 def workout_card(c, d, lib_map, sel_date, editable):
+    if d.get("optional"):
+        st.caption("Optional workout — you can skip this session.")
     exs = d["exercises"]
     if exs:
         st.button("Start workout", key=f"sw_{d['id']}", type="primary", width="stretch", on_click=start_workout, args=(d["id"], sel_date), disabled=not editable)
@@ -1186,13 +1198,14 @@ def tab_training(c, lib_map):
     editable = sel_date <= td.isoformat()
     choice = c["program"].get("client_workout_choices", {}).get(sel_date)
     assigned = workouts_for_date(c, sel_date)
-    default_kind = choice["kind"] if choice else ("General" if assigned and all(d.get("allow_swaps") or "general" in d.get("title", "").lower() for d in assigned) else "Split workout")
+    default_kind = choice["kind"] if choice else "Split workout"
+    kinds = ["Split workout", "General", "Combined split workout"]
     choice_key = f"workout_type_{c['id']}_{sel_date}"
-    st.radio("Choose your workout", ["Split workout", "General"],
-        index=0 if default_kind == "Split workout" else 1, horizontal=True,
+    st.radio("Choose your workout", kinds,
+        index=kinds.index(default_kind) if default_kind in kinds else 0, horizontal=True,
         key=choice_key, on_change=client_choose_workout, args=(c["id"], sel_date, choice_key))
-    if ss.get(choice_key) == "General" and not client_workout_options(c, sel_date, "General"):
-        st.info("Your trainer has not saved a General workout yet.")
+    if not client_workout_options(c, sel_date, ss.get(choice_key, default_kind)):
+        st.info(f"Your trainer has not saved a {ss.get(choice_key, default_kind)} workout for this day yet.")
     st.caption("Your choice applies to this day. Your weekly split schedule stays saved.")
     todays = workouts_for_date(c, sel_date)
     if not todays:
@@ -2327,7 +2340,7 @@ def builder_draft(cid):
     program = drafts[cid]["program"]
     phases = program.setdefault("phases", [])
     for p in phases:
-        p["name"] = "General" if "general" in p.get("name", "").lower() else "Split program"
+        p["name"] = {"General": "General", "Split workout": "Split program", "Combined split workout": "Combined split workout"}[workout_kind(p)]
     for name in ("General", "Split program"):
         if not any(p["name"] == name for p in phases):
             phases.append(new_phase(name, 0, []))
@@ -2356,6 +2369,7 @@ def builder_copy_to_days():
         assigned["id"] = uid()
         assigned["weekday"] = weekday
         assigned["allow_swaps"] = phase["name"] == "General"
+        assigned["workout_kind"] = workout_kind(phase)
         for exercise in assigned["exercises"] + assigned.get("bonus_exercises", []):
             exercise["id"] = uid()
         overrides[date] = [assigned]
@@ -2375,7 +2389,7 @@ def builder_apply():
     program = copy.deepcopy(draft["program"])
     split = next((p for p in program["phases"] if p["name"] == "Split program" and p["days"]), None)
     selected = next(p for p in program["phases"] if p["id"] == ss.get("bld_phase"))
-    program["active_phase"] = split["id"] if selected["name"] == "General" and split else selected["id"]
+    program["active_phase"] = split["id"] if split else selected["id"]
     phase = next(p for p in program["phases"] if p["id"] == ss.get("bld_phase"))
     program.pop("general_until", None)
     program.pop("resume_phase", None)
@@ -2406,7 +2420,7 @@ def builder_apply():
             if not target:
                 continue
             target_phase = next((p for p in target["program"]["phases"] if
-                ("General" if "general" in p.get("name", "").lower() else "Split program") == phase["name"]), None)
+                workout_kind(p) == workout_kind(phase)), None)
             if target_phase is None:
                 target_phase = new_phase(phase["name"], 0, [])
                 target["program"]["phases"].append(target_phase)
@@ -2618,6 +2632,13 @@ def page_builder(clients):
     cid = a.selectbox("Client", ids, key="bld_client", format_func=lambda i: next(x["name"] for x in clients if x["id"] == i))
     client = builder_draft(cid)
     phases = client["program"]["phases"]
+    if not any(workout_kind(p) == "Combined split workout" for p in phases):
+        phases.append(new_phase("Combined split workout", 0, [
+            new_day("Chest & Triceps", weekday=0),
+            new_day("Lat & Biceps", weekday=1),
+            new_day("Shoulder & Legs", weekday=3),
+            new_day("Chest & Triceps", weekday=4),
+        ]))
     pids = [p["id"] for p in phases]
     cur, _, _ = phase_for(client)
     if ss.get("bld_phase") not in pids:
@@ -2647,6 +2668,10 @@ def page_builder(clients):
         n1.text_input("New day name", key="bld_newname", placeholder="Chest day")
         n2.selectbox("Day of week", [-1] + list(range(7)), key="bld_newwd", format_func=lambda x: "Any day" if x == -1 else WEEKDAYS[x])
         st.button("Cancel new day", on_click=builder_cancel_new_day)
+    selected_day = next((d for d in phase["days"] if d["id"] == did), None)
+    if selected_day:
+        selected_day["optional"] = st.checkbox("This workout is optional", value=bool(selected_day.get("optional")),
+            key=f"optional_workout_{cid}_{pid}_{did}")
     st.button("Cancel workout changes", on_click=builder_reset_draft)
     st.caption("General replaces only the selected date. Your regular split workouts remain saved.")
     st.caption("Add and remove exercises in your draft, then press Apply to update the client page.")
