@@ -155,3 +155,7 @@ Habit includes daily manual entry of steps and calories burned from a tracker, w
 ### Guided and bonus workouts
 
 Clients can start a workout on today's or a past selected day, mark each exercise done and move to the next, then complete the session. Bonus exercises appear below the main workout and have separate completion. In Workout builder, select **Add selected exercises as bonus workout**, add exercises and Apply. Main and bonus completions appear in the trainer's recent client activity.
+
+### Returning to the app
+
+Clients can check **Keep me signed in on this device** when logging in on their own phone or computer. The app remembers that device for up to 30 days across page refreshes and reopening. **Profile → Log out** removes that device's access. Resetting or changing the client PIN invalidates existing remembered logins. Private browsing or clearing browser storage requires signing in again. Persistent data storage through Supabase is needed to keep sessions across server restarts; local test storage can reset on Streamlit Cloud.
